@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Base de datos local (opcional, si quieres que cada uno tenga la suya)
+*.db
+
+# VS Code
+.vscode/

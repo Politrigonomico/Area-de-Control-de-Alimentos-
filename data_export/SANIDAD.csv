@@ -1,0 +1,34 @@
+CODIGO_SANIDAD,CODIGO_ESTABLECIMIENTO,Libreta_Sanitaria,Apellido_titular,Nombre_titular,Venc_LibretaTitular,Apellido_Empleado1,Nombre_empleado1,Venc_Libretaempleado1,Apellido_Empleado2,Nombre_empleado2,Venc_Libretaempleado2,Carnet_Manipulador,Certificado_Manipulador,Fecha_CertificadoManipulador,Inscripto_CursoBPM
+1,"est001",1,"gomez","anita susana","09/12/09 00:00:00","gambino","juana inés","09/08/10 00:00:00",,,,0,0,,0
+2,"EST002",1,"fabbri","emilio vÍctor","11/06/08 00:00:00",,,,,,,0,0,,0
+3,"EST003",1,"lantermo","marcelo","11/02/09 00:00:00",,,,,,,0,0,,0
+4,"EST004",1,"russo","sandra daniela","08/05/09 00:00:00",,,,,,,0,0,,0
+5,"EST005",1,"andreoli","griselda","03/31/03 00:00:00",,,,,,,0,0,,0
+6,"EST008",1,"bolaño","joel","05/12/10 00:00:00",,,,,,,0,0,,0
+7,"EST009",1,"montecchiari","andrés pablo","07/28/10 00:00:00",,,,,,,0,0,,0
+8,"est001",1,"gambino","juana inés","09/08/10 00:00:00",,,,,,,0,0,,0
+9,"EST015",1,"moretti","noemí carmen","07/21/11 00:00:00",,,,,,,0,0,,0
+10,"EST017",1,"brassesco","zulema adela","03/11/12 00:00:00",,,,,,,0,0,,0
+11,"EST018",1,"tarulli","eduardo vicente","05/03/12 00:00:00",,,,,,,0,0,,0
+12,"EST019",1,"chuiquini","orlando","06/29/11 00:00:00",,,,,,,0,0,,0
+13,"EST020",1,"martini","evelina","06/13/12 00:00:00",,,,,,,0,0,,0
+14,"EST021",1,"pascualini","lelio","10/20/11 00:00:00",,,,,,,0,0,,0
+15,"EST023",1,"graizzaro","jesica paula","10/05/12 00:00:00","graizzaro",,"11/16/12 00:00:00",,,,0,0,,0
+16,"EST025",1,"ojeda","andrés","09/29/12 00:00:00",,,,,,,0,0,,0
+17,"EST026",1,"argutti","ANALíA","10/04/12 00:00:00",,,,,,,0,0,,0
+18,"EST028",1,"GIOVACCHINI","NORMA","10/04/12 00:00:00",,,,,,,0,0,,0
+19,"EST030",1,"CORRENTE","AURELIO","11/10/12 00:00:00",,,,,,,0,0,,0
+20,"EST032",1,"MAFFEI","FERNANDA","11/30/12 00:00:00",,,,,,,0,0,,0
+21,"EST033",1,"BENVENUTTI","MARÍA VERÓNICA","01/31/13 00:00:00",,,,,,,0,0,,0
+22,"EST034",1,"mravicich","josé luis","10/02/13 00:00:00",,,,,,,0,0,,0
+23,"EST036",1,"giancrisostemi","gisela natali","01/06/13 00:00:00",,,,,,,0,0,,0
+24,"EST037",1,"fratamico","nestor","04/26/12 00:00:00",,,,,,,0,0,,0
+25,"EST048",1,"diaz","sergio","08/13/13 00:00:00",,,,,,,0,0,,0
+26,"EST049",1,"cigolotti","nancy estela","02/07/11 00:00:00",,,,,,,0,0,,0
+27,"EST051",1,"vitali","romina","05/28/14 00:00:00",,,,,,,0,0,,0
+28,"EST052",1,"mignini","victorio josé","06/10/14 00:00:00",,,,,,,0,0,,0
+29,"EST056",1,"aranda","simeona beatriz",,,,,,,,0,0,,0
+30,"EST059",1,"dianda","sebastián ezequiel","11/01/14 00:00:00",,,,,,,0,0,,0
+31,"EST062",1,"gomez","oscar","03/11/14 00:00:00",,,,,,,0,0,,0
+32,"est128",0,"FORNI","SANDRA MARIELA","11/14/19 00:00:00",,,,,,,0,0,,0
+33,,0,,,,,,,,,,0,0,,0
