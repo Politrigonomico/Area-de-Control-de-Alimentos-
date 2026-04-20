@@ -42,6 +42,7 @@ class AuditoriasFrame(ttk.Frame):
         ttk.Button(bar, text="✎  Editar",  command=self._editar).pack(side="right", padx=4)
         ttk.Button(bar, text="✕  Eliminar", style="Danger.TButton",
                    command=self._eliminar).pack(side="right", padx=4)
+        # ── CORRECCIÓN: solo UNA definición de este botón ──
         ttk.Button(bar, text="🖨  Imprimir Acta", style="Success.TButton",
                    command=self._imprimir_acta).pack(side="left", padx=4)
 
@@ -90,55 +91,20 @@ class AuditoriasFrame(ttk.Frame):
         return int(sel[0])
 
     def _imprimir_acta(self):
-        aid = self._selected_id()
-        if aid is None:
-            return
+        """
+        Genera el Acta de Auditoría en PDF usando documentos_institucionales.
+        ── CORRECCIÓN: eliminada la versión duplicada que llamaba a reports.imprimir
+           (módulo inexistente). Esta es la única definición válida.
+        """
         from tkinter import filedialog
-        from reports.imprimir import imprimir_acta_auditoria
-        import os
-        session = get_session()
-        a = session.query(Auditoria).get(aid)
-        if not a:
-            session.close()
-            return
-        # Pre-cargar relaciones
-        e = a.establecimiento
-        if e:
-            _ = e.inscripto
-        path = filedialog.asksaveasfilename(
-            defaultextension=".pdf",
-            filetypes=[("PDF", "*.pdf")],
-            initialfile=f"acta_auditoria_{int(a.numero_auditoria) if a.numero_auditoria else aid}.pdf",
-        )
-        if path:
-            try:
-                imprimir_acta_auditoria(a, path)
-                session.close()
-                from utils.ui_helpers import info_dialog
-                info_dialog(self, "Listo", f"Acta generada:\n{path}")
-                try:
-                    import subprocess, sys
-                    if sys.platform.startswith("win"):
-                        os.startfile(path)
-                    else:
-                        subprocess.Popen(["xdg-open", path])
-                except Exception:
-                    pass
-            except Exception as ex:
-                session.close()
-                from utils.ui_helpers import error_dialog
-                error_dialog(self, "Error", str(ex))
-        else:
-            session.close()
-
-    def _imprimir_acta(self):
-        from tkinter import filedialog
-        from reports.documentos_institucionales import doc_acta_auditoria
+        from reports.documentos_institucionales import doc_acta_auditoria, _auto_path, abrir_pdf
         from database.db import get_session
         from utils.ui_helpers import error_dialog, info_dialog
+
         aid = self._selected_id()
         if aid is None:
             return
+
         path = filedialog.asksaveasfilename(
             defaultextension=".pdf",
             filetypes=[("PDF", "*.pdf")],
@@ -147,16 +113,15 @@ class AuditoriasFrame(ttk.Frame):
         )
         if not path:
             return
+
         try:
             session = get_session()
             doc_acta_auditoria(session, path, aid)
             session.close()
             info_dialog(self, "Listo", f"Acta generada:\n{path}")
-            import subprocess, sys, os
-            if sys.platform.startswith("win"):
-                os.startfile(path)
+            abrir_pdf(path)
         except Exception as ex:
-            error_dialog(self, "Error", str(ex))
+            error_dialog(self, "Error al generar acta", str(ex))
 
     def _nueva(self):
         dlg = AuditoriaDialog(self, None)
@@ -236,7 +201,6 @@ class AuditoriaDialog(tk.Toplevel):
         ]:
             ttk.Label(f, text=lbl).grid(row=row, column=0, sticky="nw", pady=5, padx=(0, 8))
             if lbl in ("Conformidades", "No Conformidades", "Conclusiones"):
-                # Multilínea con scrollbar vertical
                 frame_txt = ttk.Frame(f)
                 frame_txt.grid(row=row, column=1, columnspan=3, sticky="ew", pady=5)
                 frame_txt.columnconfigure(0, weight=1)
@@ -277,19 +241,18 @@ class AuditoriaDialog(tk.Toplevel):
         if not a:
             session.close()
             return
-        # Establecimiento
         for key, cod in self._estab_map.items():
             if cod == a.codigo_establecimiento:
                 self.e_estab.set(key)
                 break
         set_entry(self.e_num, str(int(a.numero_auditoria)) if a.numero_auditoria else "")
         set_entry(self.e_fecha, format_date(a.fecha_auditoria))
-        self._text_set(self.e_alcances,    a.alcances)
-        self._text_set(self.e_conf,        a.conformidades)
-        self._text_set(self.e_noconf,      a.no_conformidades)
-        self._text_set(self.e_conclusiones,a.conclusiones)
-        self._text_set(self.e_acta,        a.acta_multinfuncion)
-        self._text_set(self.e_material,    a.material_adjunto)
+        self._text_set(self.e_alcances,     a.alcances)
+        self._text_set(self.e_conf,         a.conformidades)
+        self._text_set(self.e_noconf,       a.no_conformidades)
+        self._text_set(self.e_conclusiones, a.conclusiones)
+        self._text_set(self.e_acta,         a.acta_multinfuncion)
+        self._text_set(self.e_material,     a.material_adjunto)
         session.close()
 
     def _guardar(self):
@@ -307,13 +270,13 @@ class AuditoriaDialog(tk.Toplevel):
             a.numero_auditoria = float(num_s) if num_s else None
         except ValueError:
             a.numero_auditoria = None
-        a.fecha_auditoria   = parse_date_str(get_entry(self.e_fecha))
-        a.alcances          = self._text_get(self.e_alcances)
-        a.conformidades     = self._text_get(self.e_conf)
-        a.no_conformidades  = self._text_get(self.e_noconf)
-        a.conclusiones      = self._text_get(self.e_conclusiones)
-        a.acta_multinfuncion= self._text_get(self.e_acta)
-        a.material_adjunto  = self._text_get(self.e_material)
+        a.fecha_auditoria    = parse_date_str(get_entry(self.e_fecha))
+        a.alcances           = self._text_get(self.e_alcances)
+        a.conformidades      = self._text_get(self.e_conf)
+        a.no_conformidades   = self._text_get(self.e_noconf)
+        a.conclusiones       = self._text_get(self.e_conclusiones)
+        a.acta_multinfuncion = self._text_get(self.e_acta)
+        a.material_adjunto   = self._text_get(self.e_material)
 
         try:
             session.commit()
@@ -370,7 +333,6 @@ class SanidadFrame(ttk.Frame):
             )
         rows = q.order_by(Sanidad.codigo_establecimiento).all()
 
-        # Serializar relaciones ANTES de cerrar la sesión
         datos = []
         for s in rows:
             nombre_estab = ""
@@ -518,8 +480,8 @@ class SanidadDialog(tk.Toplevel):
             if cod == s.codigo_establecimiento:
                 self.e_estab.set(key)
                 break
-        set_entry(self.e_ap_tit,  s.apellido_titular or "")
-        set_entry(self.e_nom_tit, s.nombre_titular or "")
+        set_entry(self.e_ap_tit,   s.apellido_titular or "")
+        set_entry(self.e_nom_tit,  s.nombre_titular or "")
         set_entry(self.e_venc_tit, format_date(s.venc_libreta_titular))
         set_entry(self.e_ap_emp1,  s.apellido_empleado1 or "")
         set_entry(self.e_nom_emp1, s.nombre_empleado1 or "")
@@ -546,21 +508,21 @@ class SanidadDialog(tk.Toplevel):
             s = Sanidad()
             session.add(s)
 
-        s.codigo_establecimiento = self._estab_map[estab_key]
-        s.apellido_titular       = get_entry(self.e_ap_tit)
-        s.nombre_titular         = get_entry(self.e_nom_tit)
-        s.venc_libreta_titular   = parse_date_str(get_entry(self.e_venc_tit))
-        s.apellido_empleado1     = get_entry(self.e_ap_emp1)
-        s.nombre_empleado1       = get_entry(self.e_nom_emp1)
-        s.venc_libreta_empleado1 = parse_date_str(get_entry(self.e_venc_emp1))
-        s.apellido_empleado2     = get_entry(self.e_ap_emp2)
-        s.nombre_empleado2       = get_entry(self.e_nom_emp2)
-        s.venc_libreta_empleado2 = parse_date_str(get_entry(self.e_venc_emp2))
-        s.libreta_sanitaria      = self.v_libreta.get()
-        s.carnet_manipulador     = self.v_carnet.get()
-        s.certificado_manipulador= self.v_certif.get()
-        s.inscripto_curso_bpm    = self.v_bpm.get()
-        s.fecha_certificado_manip= parse_date_str(get_entry(self.e_fecha_certif))
+        s.codigo_establecimiento  = self._estab_map[estab_key]
+        s.apellido_titular        = get_entry(self.e_ap_tit)
+        s.nombre_titular          = get_entry(self.e_nom_tit)
+        s.venc_libreta_titular    = parse_date_str(get_entry(self.e_venc_tit))
+        s.apellido_empleado1      = get_entry(self.e_ap_emp1)
+        s.nombre_empleado1        = get_entry(self.e_nom_emp1)
+        s.venc_libreta_empleado1  = parse_date_str(get_entry(self.e_venc_emp1))
+        s.apellido_empleado2      = get_entry(self.e_ap_emp2)
+        s.nombre_empleado2        = get_entry(self.e_nom_emp2)
+        s.venc_libreta_empleado2  = parse_date_str(get_entry(self.e_venc_emp2))
+        s.libreta_sanitaria       = self.v_libreta.get()
+        s.carnet_manipulador      = self.v_carnet.get()
+        s.certificado_manipulador = self.v_certif.get()
+        s.inscripto_curso_bpm     = self.v_bpm.get()
+        s.fecha_certificado_manip = parse_date_str(get_entry(self.e_fecha_certif))
 
         try:
             session.commit()

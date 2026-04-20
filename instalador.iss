@@ -20,8 +20,8 @@ SolidCompression=yes
 Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; GroupDescription: "Accesos directos:"; Flags: unchecked
 
 [Files]
-; Copia el ejecutable principal
-Source: "dist\SistemaAlimentos\SistemaAlimentos.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Copia el ejecutable, la carpeta _internal, la carpeta data_export, imágenes y todo lo necesario
+Source: "dist\SistemaAlimentos\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Copia todos los archivos y subcarpetas de dependencias
 Source: "dist\SistemaAlimentos\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs

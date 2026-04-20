@@ -110,19 +110,10 @@ class EstablecimientosFrame(ttk.Frame):
             return None
         return sel[0]
 
-    def _ver_detalle(self):
-        codigo = self._selected_codigo()
-        if not codigo:
-            return
-        dlg = EstablecimientoDialog(self, codigo)
-        self.wait_window(dlg)
-        self.refresh()
-
     def _menu_impresion(self):
         codigo = self._selected_codigo()
         if not codigo:
             return
-        import tkinter as tk
         menu = tk.Menu(self, tearoff=0)
         menu.add_command(label="Certificado de Inscripción",
                          command=lambda: self._imprimir_certificado(codigo))
@@ -137,12 +128,7 @@ class EstablecimientosFrame(ttk.Frame):
         finally:
             menu.grab_release()
 
-    def _abrir_pdf(self, path):
-        from reports.documentos_institucionales import abrir_pdf
-        abrir_pdf(path)
-
     def _imprimir_certificado(self, codigo):
-        """Certificado de Inscripción oficial — se abre directo sin diálogo."""
         from reports.documentos_institucionales import doc_certificado_inscripcion, _auto_path, abrir_pdf
         from database.db import get_session
         from utils.ui_helpers import error_dialog
@@ -163,7 +149,9 @@ class EstablecimientosFrame(ttk.Frame):
         session = get_session()
         e = session.query(Establecimiento).get(codigo)
         if not e or not e.codigo_inscripcion:
-            error_dialog(self, "Error", "El establecimiento no tiene inscripto asignado.")
+            error_dialog(self, "Error",
+                         "El establecimiento no tiene un inscripto asignado.\n"
+                         "Editá el establecimiento y asigná un titular primero.")
             session.close()
             return
         insc_id = e.codigo_inscripcion
@@ -175,9 +163,9 @@ class EstablecimientosFrame(ttk.Frame):
             session.close()
             abrir_pdf(path)
         except Exception as ex:
-            error_dialog(self, "Error", str(ex))
+            error_dialog(self, "Error al generar recibo", str(ex))
 
-    def _imprimir_tasa(self, codigo):
+
         from reports.documentos_institucionales import doc_recibo_tasa_inscripcion, _auto_path, abrir_pdf
         from database.db import get_session
         from utils.ui_helpers import error_dialog
@@ -286,7 +274,8 @@ class EstablecimientoDialog(tk.Toplevel):
 
         ttk.Label(f, text="Estado tramite").grid(row=0, column=2, sticky="w", padx=(12, 8))
         self.e_estado = ttk.Combobox(f, values=[
-            "FINALIZADO", "EN TRAMITE", "PENDIENTE", "BAJA", "SUSPENDIDO"], width=18, state="readonly")
+            "FINALIZADO", "EN TRAMITE", "PENDIENTE", "BAJA", "SUSPENDIDO",
+            "PENDIENTE DE PAGO", "OTRO"], width=18, state="readonly")
         self.e_estado.grid(row=0, column=3, sticky="ew", pady=4)
 
         ttk.Label(f, text="Nombre *").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 8))
@@ -342,7 +331,8 @@ class EstablecimientoDialog(tk.Toplevel):
         session.close()
         rubro_vals = [""] + list(self._rubros_map.keys())
 
-        self._labels_diferencia = {}  # guardamos los labels para actualizarlos
+        # Dict para guardar labels de diferencia: attr_lbl -> (label_widget, entry_widget)
+        self._labels_diferencia = {}
 
         for i, (lbl, attr_cb, attr_monto, attr_lbl) in enumerate([
             ("Rubro principal", "e_rubro",  "e_monto",  "lbl_dif_0"),
@@ -362,12 +352,11 @@ class EstablecimientoDialog(tk.Toplevel):
 
             # Label de diferencia — inicialmente vacío
             lbl_dif = ttk.Label(f, text="", font=("Segoe UI", 9),
-                                foreground="#b7791f")  # naranja
+                                 foreground="#b7791f")
             lbl_dif.grid(row=i, column=4, sticky="w", padx=(6, 0))
             self._labels_diferencia[attr_lbl] = (lbl_dif, ent)
-            setattr(self, attr_lbl + "_widget", lbl_dif)
 
-            # Al elegir rubro: actualizar monto Y mostrar diferencia si existe
+            # Al elegir rubro: actualizar monto y limpiar aviso de diferencia
             def _on_rubro_select(event, entry=ent, combo=cb, lbl_key=attr_lbl):
                 key = combo.get()
                 rid = self._rubros_map.get(key)
@@ -377,7 +366,6 @@ class EstablecimientoDialog(tk.Toplevel):
                     entry.delete(0, "end")
                     entry.insert(0, f"{valor_actual:.2f}")
                     entry.configure(state="disabled")
-                    # Al elegir de nuevo, el monto se sincroniza — limpiar aviso
                     lbl_w, _ = self._labels_diferencia[lbl_key]
                     lbl_w.configure(text="")
             cb.bind("<<ComboboxSelected>>", _on_rubro_select)
@@ -431,17 +419,21 @@ class EstablecimientoDialog(tk.Toplevel):
         set_rubro_cb(self.e_anexo1, e.anexo1_id)
         set_rubro_cb(self.e_anexo2, e.anexo2_id)
         set_rubro_cb(self.e_anexo3, e.anexo3_id)
-        set_entry(self.e_monto,  str(e.monto or 0))
-        set_entry(self.e_monto1, str(e.monto1 or 0))
-        set_entry(self.e_monto2, str(e.monto2 or 0))
-        set_entry(self.e_monto3, str(e.monto3 or 0))
 
-        session.close()
-    # Después del bloque que carga los montos (el for loop con configure state)
-# Agregar esto al final de _load:
+        # Montos — habilitar temporalmente para escribir
+        for ent, valor in [
+            (self.e_monto,  e.monto  or 0),
+            (self.e_monto1, e.monto1 or 0),
+            (self.e_monto2, e.monto2 or 0),
+            (self.e_monto3, e.monto3 or 0),
+        ]:
+            ent.configure(state="normal")
+            ent.delete(0, "end")
+            ent.insert(0, f"{valor:.2f}")
+            ent.configure(state="disabled")
 
+        # Avisar si el monto guardado difiere del valor actual del rubro
         def _verificar_diferencia(attr_lbl, monto_guardado, rubro_cb):
-            """Muestra aviso si el monto guardado difiere del valor actual del rubro."""
             key = rubro_cb.get()
             rid = self._rubros_map.get(key)
             if not rid:
@@ -451,15 +443,17 @@ class EstablecimientoDialog(tk.Toplevel):
                 lbl_w, _ = self._labels_diferencia[attr_lbl]
                 lbl_w.configure(
                     text=f"⚠ Rubro actual: $ {valor_rubro_actual:,.2f}\n"
-                        f"(guardado: $ {monto_guardado:,.2f})"
+                         f"(guardado: $ {monto_guardado:,.2f})"
                 )
 
-        _verificar_diferencia("lbl_dif_0", e.monto or 0,  self.e_rubro)
+        # ── CORRECCIÓN: estas llamadas están DENTRO de _load ──
+        _verificar_diferencia("lbl_dif_0", e.monto  or 0, self.e_rubro)
         _verificar_diferencia("lbl_dif_1", e.monto1 or 0, self.e_anexo1)
         _verificar_diferencia("lbl_dif_2", e.monto2 or 0, self.e_anexo2)
         _verificar_diferencia("lbl_dif_3", e.monto3 or 0, self.e_anexo3)
 
-        
+        session.close()
+
     def _guardar(self):
         codigo = get_entry(self.e_codigo).upper()
         nombre = get_entry(self.e_nombre)
@@ -481,7 +475,7 @@ class EstablecimientoDialog(tk.Toplevel):
                 return
             e = Establecimiento(codigo_establecimiento=codigo)
             session.add(e)
-    
+
         e.nombre_establecimiento     = nombre.upper()
         e.estado_tramite             = self.e_estado.get() or None
         e.domicilio_establecimiento  = get_entry(self.e_domicilio)
@@ -503,13 +497,14 @@ class EstablecimientoDialog(tk.Toplevel):
             return self._rubros_map.get(cb.get())
 
         e.rubro_id  = rubro_id_from_cb(self.e_rubro)
-        e.monto     = parse_float_str(get_entry(self.e_monto))
+        # Los montos están disabled pero sus valores se leen igual con .get()
+        e.monto     = parse_float_str(self.e_monto.get())
         e.anexo1_id = rubro_id_from_cb(self.e_anexo1)
-        e.monto1    = parse_float_str(get_entry(self.e_monto1))
+        e.monto1    = parse_float_str(self.e_monto1.get())
         e.anexo2_id = rubro_id_from_cb(self.e_anexo2)
-        e.monto2    = parse_float_str(get_entry(self.e_monto2))
+        e.monto2    = parse_float_str(self.e_monto2.get())
         e.anexo3_id = rubro_id_from_cb(self.e_anexo3)
-        e.monto3    = parse_float_str(get_entry(self.e_monto3))
+        e.monto3    = parse_float_str(self.e_monto3.get())
 
         try:
             session.commit()

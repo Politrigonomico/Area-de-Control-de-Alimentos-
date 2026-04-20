@@ -1,13 +1,15 @@
 """
-Panel de inicio — dashboard con estadísticas rápidas.
+Panel de inicio — dashboard con estadísticas rápidas y backup de DB.
 """
+import os
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from datetime import datetime
 
 from database.db import get_session
 from database.models import Establecimiento, Inscripto, Deuda, Auditoria
 from utils.ui_helpers import COLORS, FONT_TITLE, FONT_HEADER, FONT_NORMAL
+from utils.backup import hacer_backup, listar_backups, BACKUP_DIR
 
 
 class DashboardFrame(ttk.Frame):
@@ -30,6 +32,44 @@ class DashboardFrame(ttk.Frame):
                  font=("Segoe UI", 12),
                  bg=COLORS["bg_sidebar"], fg="#90cdf4").pack()
 
+        # ── Franja de backup ────────────────────────────────────────────────
+        backup_bar = tk.Frame(self, bg=COLORS["bg_panel"],
+                              highlightbackground=COLORS["border"],
+                              highlightthickness=1)
+        backup_bar.pack(fill="x", padx=0, pady=(0, 2))
+
+        self.lbl_ultimo_backup = tk.Label(
+            backup_bar,
+            text="Último backup: calculando…",
+            font=("Segoe UI", 10),
+            bg=COLORS["bg_panel"],
+            fg=COLORS["text_light"],
+        )
+        self.lbl_ultimo_backup.pack(side="left", padx=14, pady=6)
+
+        tk.Button(
+            backup_bar,
+            text="💾  Hacer backup ahora",
+            font=("Segoe UI", 10),
+            bg=COLORS["accent"], fg="white",
+            relief="flat", bd=0,
+            padx=12, pady=4,
+            cursor="hand2",
+            activebackground="#1a5090",
+            command=self._hacer_backup,
+        ).pack(side="right", padx=10, pady=6)
+
+        tk.Button(
+            backup_bar,
+            text="📂  Ver backups",
+            font=("Segoe UI", 10),
+            bg=COLORS["bg_panel"], fg=COLORS["accent"],
+            relief="flat", bd=0,
+            padx=8, pady=4,
+            cursor="hand2",
+            command=self._ver_backups,
+        ).pack(side="right", padx=4, pady=6)
+
         # Tarjetas
         self.cards_frame = ttk.Frame(self, padding=20)
         self.cards_frame.pack(fill="x")
@@ -39,7 +79,88 @@ class DashboardFrame(ttk.Frame):
             self, text="⚠  Deudas vencidas hoy o antes", padding=12)
         self.alerts_frame.pack(fill="x", padx=20, pady=(0, 16))
 
+    def _hacer_backup(self):
+        try:
+            destino = hacer_backup()
+            messagebox.showinfo(
+                "Backup realizado",
+                f"Base de datos respaldada correctamente.\n\n{destino}",
+            )
+            self._actualizar_label_backup()
+        except Exception as ex:
+            messagebox.showerror("Error en backup", str(ex))
+
+    def _ver_backups(self):
+        """Abre ventana con listado de backups disponibles."""
+        win = tk.Toplevel(self)
+        win.title("Backups disponibles")
+        win.resizable(True, False)
+        win.geometry("580x320")
+        win.grab_set()
+
+        ttk.Label(win, text=f"Carpeta: {BACKUP_DIR}",
+                  font=("Segoe UI", 9),
+                  foreground=COLORS["text_light"]).pack(anchor="w", padx=12, pady=(10, 2))
+
+        cols   = ("nombre", "fecha", "tamaño")
+        heads  = ("Archivo", "Fecha", "Tamaño (KB)")
+        widths = (280, 140, 90)
+
+        frame = ttk.Frame(win)
+        frame.pack(fill="both", expand=True, padx=12, pady=6)
+
+        vsb  = ttk.Scrollbar(frame, orient="vertical")
+        tree = ttk.Treeview(frame, columns=cols, show="headings",
+                            height=10, yscrollcommand=vsb.set)
+        vsb.config(command=tree.yview)
+        for c, h, w in zip(cols, heads, widths):
+            tree.heading(c, text=h, anchor="w")
+            tree.column(c, width=w, anchor="w")
+        tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        backups = listar_backups()
+        if backups:
+            for nombre, fecha, tam in backups:
+                tree.insert("", "end", values=(nombre, fecha, tam))
+        else:
+            ttk.Label(win, text="No hay backups todavía.",
+                      foreground=COLORS["text_light"]).pack(pady=10)
+
+        def abrir_carpeta():
+            import subprocess, sys
+            if sys.platform.startswith("win"):
+                os.startfile(BACKUP_DIR)
+            elif sys.platform.startswith("darwin"):
+                subprocess.Popen(["open", BACKUP_DIR])
+            else:
+                subprocess.Popen(["xdg-open", BACKUP_DIR])
+
+        bar = ttk.Frame(win)
+        bar.pack(fill="x", padx=12, pady=(0, 10))
+        ttk.Button(bar, text="📂  Abrir carpeta", command=abrir_carpeta).pack(side="left")
+        ttk.Button(bar, text="Cerrar", command=win.destroy).pack(side="right")
+
+    def _actualizar_label_backup(self):
+        backups = listar_backups()
+        if backups:
+            _, fecha, tam = backups[0]
+            self.lbl_ultimo_backup.config(
+                text=f"Último backup: {fecha}  ({tam} KB)",
+                fg=COLORS["success"],
+            )
+        else:
+            self.lbl_ultimo_backup.config(
+                text="Sin backups todavía. Se recomienda hacer uno antes de usar el sistema.",
+                fg=COLORS["warning"],
+            )
+
     def refresh(self):
+        # Actualizar label de backup
+        self._actualizar_label_backup()
+
         # Limpiar widgets anteriores
         for w in self.cards_frame.winfo_children():
             w.destroy()
@@ -59,8 +180,6 @@ class DashboardFrame(ttk.Frame):
                 func.sum(Deuda.importe - Deuda.monto_abonado)
             ).filter(Deuda.pago == False).scalar() or 0.0
 
-            # Deudas vencidas — extraer TODOS los datos necesarios
-            # mientras la sesión está abierta para evitar DetachedInstanceError
             hoy = datetime.now()
             rows_vencidas = (
                 session.query(Deuda)
@@ -70,18 +189,17 @@ class DashboardFrame(ttk.Frame):
                 .all()
             )
 
-            # Serializar a dicts simples ANTES de cerrar la sesión
             vencidas = []
             for d in rows_vencidas:
                 nombre = ""
                 if d.establecimiento:
                     nombre = (d.establecimiento.nombre_establecimiento or "").title()
                 vencidas.append({
-                    "codigo": d.codigo_establecimiento or "",
-                    "nombre": nombre,
-                    "periodo": f"{d.periodo}/{d.anio}",
+                    "codigo":      d.codigo_establecimiento or "",
+                    "nombre":      nombre,
+                    "periodo":     f"{d.periodo}/{d.anio}",
                     "vencimiento": d.vencimiento.strftime("%d/%m/%Y") if d.vencimiento else "—",
-                    "saldo": d.saldo,
+                    "saldo":       d.saldo,
                 })
         finally:
             session.close()

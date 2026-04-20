@@ -7,6 +7,7 @@ Documentos:
   2. Recibo de Pago de Inicio de Trámite
   3. Recibo de Tasa de Inscripción Área de Alimentos
   4. Detalle de Deuda / Recibo con intereses
+  5. Certificado de Inscripción
 """
 from datetime import datetime
 import locale
@@ -22,6 +23,7 @@ def _fecha_larga_es(dt=None):
     dia_nombre = _DIAS_ES[dt.weekday()]
     mes_nombre = _MESES_ES[dt.month - 1]
     return f"{dia_nombre}, {dt.day} de {mes_nombre} de {dt.year}"
+
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.units import cm, mm
@@ -93,7 +95,7 @@ def _meses_mora(vencimiento: datetime) -> int:
     return (hoy.year - vencimiento.year) * 12 + (hoy.month - vencimiento.month)
 
 def _calcular_interes(importe: float, vencimiento: datetime):
-    """Calcula intereses desde la fecha de vencimiento original (verificado con docs reales)."""
+    """Calcula intereses desde la fecha de vencimiento original."""
     meses = _meses_mora(vencimiento)
     int_acum = meses * TASA_MENSUAL
     actualizado = importe * (1 + int_acum / 100)
@@ -103,16 +105,12 @@ def _cabecera_institucional(story, titulo: str, styles):
     """Bloque de encabezado común a todos los documentos — con logo."""
     from reportlab.platypus import Image as RLImage
 
-    # Columna izquierda: logo + datos institucionales
     col_izq = []
 
-    # Logo (si existe el archivo)
     if _os_logo.path.exists(LOGO_PATH):
-        # 212x238px original — mostramos a 1.4cm de alto proporcional
         logo_h = 1.4 * cm
         logo_w = logo_h * (212 / 238)
         logo_img = RLImage(LOGO_PATH, width=logo_w, height=logo_h)
-        # Combinar logo e institución en una tabla interna
         inst_txt = Paragraph(
             f"<b>{INSTITUCION}</b><br/>"
             f"<font size='10'>{AREA}</font><br/>"
@@ -220,7 +218,6 @@ def doc_acta_auditoria(session, output_path: str, auditoria_id: int):
 
     _cabecera_institucional(story, "Acta de Auditoría", styles)
 
-    # Fila: Código Establecimiento | Código Auditoría | Fecha Auditoría
     num_str = str(int(a.numero_auditoria)) if a.numero_auditoria else ""
     fila1_data = [[
         Paragraph(f"Código Establecimiento: <b>{a.codigo_establecimiento or ''}</b>",
@@ -241,11 +238,9 @@ def doc_acta_auditoria(session, output_path: str, auditoria_id: int):
                            ("BOTTOMPADDING",(0,0),(-1,-1),4)]))
     story.append(t)
 
-    # Nombre establecimiento
     nombre_estab = (e.nombre_establecimiento if e else "") or ""
     story.append(_campo("Nombre Establecimiento", nombre_estab.upper()))
 
-    # Domicilio
     domicilio = ""
     num_dom   = ""
     localidad = ""
@@ -271,14 +266,12 @@ def doc_acta_auditoria(session, output_path: str, auditoria_id: int):
                             ("BOTTOMPADDING",(0,0),(-1,-1),4)]))
     story.append(t2)
 
-    # Titular
     titular = ""
     if inscripto:
         titular = f"{(inscripto.apellido_razonsocial or '').upper()} {(inscripto.nombres or '').upper()}".strip()
     story.append(_campo("Apellido y Nombres del Titular", titular))
     story.append(Spacer(1, 4))
 
-    # Secciones con cuadros
     for titulo, texto, altura in [
         ("Alcances de la Auditoría",  a.alcances or "",         1.8*cm),
         ("Conformidades",             a.conformidades or "",    2.2*cm),
@@ -289,7 +282,6 @@ def doc_acta_auditoria(session, output_path: str, auditoria_id: int):
         story.append(_seccion(titulo))
         story.append(_caja_texto(texto, altura))
 
-    # Acta Multifuncion y Anexo Auditoria
     story.append(Spacer(1, 6))
     pie_data = [[
         Paragraph(f"Acta Multifuncion Nº: {'_' * 14}",
@@ -299,7 +291,6 @@ def doc_acta_auditoria(session, output_path: str, auditoria_id: int):
     ]]
     story.append(Table(pie_data, colWidths=[9*cm, 9*cm]))
 
-    # Firmas
     story.append(Spacer(1, 0.5*cm))
     firma_data = [[
         Paragraph("." * 35 + "<br/>Firma del Auditado",
@@ -323,17 +314,181 @@ def doc_acta_auditoria(session, output_path: str, auditoria_id: int):
 # DOCUMENTO 2: RECIBO DE PAGO DE INICIO DE TRÁMITE
 # ════════════════════════════════════════════════════════════════════════════
 
+def doc_recibo_inicio_tramite(session, output_path: str, codigo_inscripcion: int):
+    """
+    Recibo de pago del sellado abonado al iniciar el trámite de inscripción.
+    Datos del titular (Inscripto) + monto_sellado + fecha_inicio_tramite.
+    """
+    from database.models import Inscripto, Establecimiento
+
+    inscripto = session.query(Inscripto).get(codigo_inscripcion)
+    if not inscripto:
+        raise ValueError(f"Inscripto {codigo_inscripcion} no encontrado.")
+
+    # Buscar el establecimiento asociado (puede haber más de uno, tomamos el primero activo)
+    estab = (session.query(Establecimiento)
+             .filter_by(codigo_inscripcion=codigo_inscripcion, baja=False)
+             .first())
+    if not estab:
+        estab = (session.query(Establecimiento)
+                 .filter_by(codigo_inscripcion=codigo_inscripcion)
+                 .first())
+
+    nombre_titular = f"{(inscripto.apellido_razonsocial or '').upper()} " \
+                     f"{(inscripto.nombres or '').upper()}".strip()
+    nombre_estab   = (estab.nombre_establecimiento or "").upper() if estab else "—"
+    cod_estab      = estab.codigo_establecimiento if estab else "—"
+
+    doc = SimpleDocTemplate(
+        output_path, pagesize=A4,
+        leftMargin=2*cm, rightMargin=2*cm,
+        topMargin=2*cm, bottomMargin=2*cm,
+    )
+    story = []
+
+    _cabecera_institucional(story, "Recibo de Pago\nInicio de Trámite", {})
+    story.append(Spacer(1, 0.4*cm))
+
+    # Nº de recibo = código de inscripción
+    story.append(Paragraph(
+        f"Recibo Nº  <b>{inscripto.codigo_inscripcion}</b>",
+        ParagraphStyle("nro", fontName="Helvetica-Bold", fontSize=13,
+                       alignment=TA_RIGHT, textColor=AZUL)
+    ))
+    story.append(Spacer(1, 0.3*cm))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=GRIS, spaceAfter=8))
+
+    # Datos del titular
+    def fila2(lbl1, val1, lbl2, val2, w1=4*cm, w2=7*cm, w3=3*cm, w4=4*cm):
+        data = [[
+            Paragraph(f"<b>{lbl1}:</b>",
+                      ParagraphStyle("l", fontName="Helvetica-Bold", fontSize=10)),
+            Paragraph(str(val1 or ""),
+                      ParagraphStyle("v", fontName="Helvetica", fontSize=10)),
+            Paragraph(f"<b>{lbl2}:</b>",
+                      ParagraphStyle("l", fontName="Helvetica-Bold", fontSize=10)),
+            Paragraph(str(val2 or ""),
+                      ParagraphStyle("v", fontName="Helvetica", fontSize=10)),
+        ]]
+        t = Table(data, colWidths=[w1, w2, w3, w4])
+        t.setStyle(TableStyle([
+            ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
+            ("TOPPADDING",    (0,0), (-1,-1), 4),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+        ]))
+        return t
+
+    story.append(fila2(
+        "Titular", nombre_titular,
+        "Cód. Estab.", cod_estab,
+        w1=3*cm, w2=9*cm, w3=3.5*cm, w4=2.5*cm,
+    ))
+    story.append(fila2(
+        "Establecimiento", nombre_estab,
+        "Localidad", (estab.localidad_establecimiento or "FIGHIERA").upper() if estab else "FIGHIERA",
+        w1=3.5*cm, w2=8*cm, w3=3*cm, w4=3.5*cm,
+    ))
+
+    # Documento y CUIT
+    doc_str  = f"{inscripto.tipo_documento or 'DNI'}  {inscripto.numero_documento or ''}"
+    cuit_str = f"{inscripto.tipo_identificacion or 'CUIT'}  {inscripto.numero_identificacion or ''}"
+    story.append(fila2(
+        "Documento", doc_str,
+        "CUIT/CUIL", cuit_str,
+        w1=3.5*cm, w2=5.5*cm, w3=3.5*cm, w4=5.5*cm,
+    ))
+
+    # Domicilio
+    dom_str  = f"{inscripto.domicilio or ''}  {inscripto.numero_domicilio or ''}".strip()
+    prov_str = f"{inscripto.localidad or ''}  ({inscripto.provincia or ''})".strip()
+    story.append(fila2(
+        "Domicilio", dom_str,
+        "Localidad", prov_str,
+        w1=3.5*cm, w2=5.5*cm, w3=3.5*cm, w4=5.5*cm,
+    ))
+
+    story.append(Spacer(1, 0.5*cm))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=GRIS, spaceAfter=8))
+
+    # Concepto
+    story.append(Paragraph(
+        "<b>Concepto:</b>  Pago de sellado por inicio de trámite de inscripción "
+        "en el Área de Alimentos — Municipalidad de Fighiera.",
+        ParagraphStyle("concepto", fontName="Helvetica", fontSize=10, leading=14,
+                       spaceAfter=12)
+    ))
+
+    # Fecha de inicio de trámite
+    fecha_tramite = _fmt_fecha(inscripto.fecha_inicio_tramite) or "—"
+    story.append(fila2(
+        "Fecha inicio trámite", fecha_tramite,
+        "Expediente Nº", str(inscripto.codigo_inscripcion),
+        w1=4*cm, w2=5*cm, w3=3.5*cm, w4=5.5*cm,
+    ))
+
+    story.append(Spacer(1, 0.5*cm))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=GRIS, spaceAfter=8))
+
+    # Importe del sellado — recuadro destacado
+    monto = inscripto.monto_sellado or 0.0
+    total_data = [[
+        Paragraph("IMPORTE ABONADO:",
+                  ParagraphStyle("tp", fontName="Helvetica-Bold", fontSize=13,
+                                 alignment=TA_RIGHT)),
+        Paragraph(f"<b>{_fmt_moneda(monto)}</b>",
+                  ParagraphStyle("tv", fontName="Helvetica-Bold", fontSize=15,
+                                 textColor=AZUL, alignment=TA_RIGHT)),
+    ]]
+    t_total = Table(total_data, colWidths=[13*cm, 5*cm])
+    t_total.setStyle(TableStyle([
+        ("BACKGROUND",    (0,0), (-1,-1), AZUL_CLARO),
+        ("TOPPADDING",    (0,0), (-1,-1), 8),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+        ("LEFTPADDING",   (0,0), (-1,-1), 10),
+        ("RIGHTPADDING",  (0,0), (-1,-1), 10),
+        ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
+    ]))
+    story.append(t_total)
+
+    story.append(Spacer(1, 0.8*cm))
+
+    # Fecha y sello
+    fecha_lugar_data = [[
+        Paragraph(
+            f"Fighiera,  {_fecha_larga_es()}",
+            ParagraphStyle("fl", fontName="Helvetica", fontSize=10)
+        ),
+        Paragraph("SELLO DE PAGADO",
+                  ParagraphStyle("s", fontName="Helvetica-Bold", fontSize=10,
+                                 alignment=TA_CENTER, textColor=GRIS)),
+    ]]
+    sello_t = Table(fecha_lugar_data, colWidths=[9*cm, 9*cm], rowHeights=[3*cm])
+    sello_t.setStyle(TableStyle([
+        ("VALIGN",       (0,0), (0,0), "TOP"),
+        ("VALIGN",       (1,0), (1,0), "BOTTOM"),
+        ("BOX",          (1,0), (1,0), 1, GRIS),
+        ("BOTTOMPADDING",(1,0), (1,0), 6),
+        ("ALIGN",        (1,0), (1,0), "CENTER"),
+    ]))
+    story.append(sello_t)
+
+    doc.build(story, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
+    return output_path
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# DOCUMENTO 3: RECIBO DE TRANSACCIÓN DE PAGO DE DEUDA
+# ════════════════════════════════════════════════════════════════════════════
+
 def doc_recibo_transaccion(session, output_path: str, codigos_deuda: list):
     """
     Genera un recibo con ÚNICAMENTE las deudas indicadas por ID.
-    Usado para imprimir el recibo de la transacción que se acaba de registrar.
     """
     from database.models import Deuda, Establecimiento
 
     if not codigos_deuda:
         raise ValueError("No se indicaron deudas para el recibo.")
 
-    # Cargar las deudas indicadas
     deudas = session.query(Deuda).filter(
         Deuda.codigo_deuda.in_(codigos_deuda)
     ).order_by(Deuda.anio, Deuda.periodo).all()
@@ -341,7 +496,6 @@ def doc_recibo_transaccion(session, output_path: str, codigos_deuda: list):
     if not deudas:
         raise ValueError("No se encontraron las deudas indicadas.")
 
-    # Tomar el establecimiento de la primera deuda
     codigo_estab = deudas[0].codigo_establecimiento
     e = session.query(Establecimiento).get(codigo_estab.upper())
     nombre_estab = (e.nombre_establecimiento or "").upper() if e else codigo_estab
@@ -419,7 +573,7 @@ def doc_recibo_transaccion(session, output_path: str, codigos_deuda: list):
         ])
 
     from reportlab.lib import colors as _colors
-    GRIS_FILA = _colors.HexColor("#f2f2f2")
+    GRIS_FILA2 = _colors.HexColor("#f2f2f2")
     t = Table(tabla_data, colWidths=col_w, repeatRows=1)
     t.setStyle(TableStyle([
         ("BACKGROUND",    (0,0), (-1,0), AZUL),
@@ -428,7 +582,7 @@ def doc_recibo_transaccion(session, output_path: str, codigos_deuda: list):
         ("FONTSIZE",      (0,0), (-1,-1), 9),
         ("ALIGN",         (0,0), (-1,0), "CENTER"),
         ("ALIGN",         (0,1), (-1,-1), "CENTER"),
-        ("ROWBACKGROUNDS",(0,1), (-1,-1), [_colors.white, GRIS_FILA]),
+        ("ROWBACKGROUNDS",(0,1), (-1,-1), [_colors.white, GRIS_FILA2]),
         ("GRID",          (0,0), (-1,-1), 0.3, _colors.HexColor("#cccccc")),
         ("TOPPADDING",    (0,0), (-1,-1), 4),
         ("BOTTOMPADDING", (0,0), (-1,-1), 4),
@@ -436,14 +590,12 @@ def doc_recibo_transaccion(session, output_path: str, codigos_deuda: list):
     story.append(t)
     story.append(Spacer(1, 0.4*cm))
 
-    # Medio de pago (del primer registro)
     medio = filas[0]["medio"] if filas else "EFECTIVO"
     story.append(Paragraph(
         f"Medio de pago: <b>{medio}</b>",
         ParagraphStyle("mp", fontName="Helvetica", fontSize=10)))
     story.append(Spacer(1, 0.2*cm))
 
-    # Total
     total_data = [[
         Paragraph("TOTAL ABONADO:",
                   ParagraphStyle("tp", fontName="Helvetica-Bold", fontSize=12,
@@ -463,7 +615,7 @@ def doc_recibo_transaccion(session, output_path: str, codigos_deuda: list):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# DOCUMENTO 3: RECIBO TASA INSCRIPCIÓN ÁREA DE ALIMENTOS
+# DOCUMENTO 4: RECIBO TASA INSCRIPCIÓN ÁREA DE ALIMENTOS
 # ════════════════════════════════════════════════════════════════════════════
 
 def doc_recibo_tasa_inscripcion(session, output_path: str, codigo_establecimiento: str):
@@ -476,7 +628,6 @@ def doc_recibo_tasa_inscripcion(session, output_path: str, codigo_establecimient
     inscripto = e.inscripto
     rubro_nombre = e.rubro_rel.nombre if e.rubro_rel else ""
 
-    # Resolver nombres de anexos
     def nombre_anexo(model, aid):
         if not aid:
             return ""
@@ -500,7 +651,6 @@ def doc_recibo_tasa_inscripcion(session, output_path: str, codigo_establecimient
     _cabecera_institucional(story, "Recibo Tasa Inscripción\nÁrea de Alimentos", {})
     story.append(Spacer(1, 0.3*cm))
 
-    # Encabezado: Nº, Código, Localidad, Fecha
     enc_data = [[
         Paragraph(f"Nº: <b>{nro_recibo}</b>",
                   ParagraphStyle("f", fontName="Helvetica", fontSize=11)),
@@ -512,11 +662,9 @@ def doc_recibo_tasa_inscripcion(session, output_path: str, codigo_establecimient
     story.append(Table(enc_data, colWidths=[4*cm, 8*cm, 6*cm]))
     story.append(HRFlowable(width="100%", thickness=0.5, color=GRIS, spaceAfter=6))
 
-    # Nombre establecimiento
     story.append(_campo("Nombre Establecimiento",
                         (e.nombre_establecimiento or "").upper()))
 
-    # Domicilio
     dom_data = [[
         Paragraph(f"Domicilio: <b>{(e.domicilio_establecimiento or '').upper()}</b>",
                   ParagraphStyle("f", fontName="Helvetica", fontSize=10)),
@@ -525,7 +673,6 @@ def doc_recibo_tasa_inscripcion(session, output_path: str, codigo_establecimient
     ]]
     story.append(Table(dom_data, colWidths=[9*cm, 9*cm]))
 
-    # Rubro y anexos con montos
     story.append(Spacer(1, 0.5*cm))
     story.append(HRFlowable(width="100%", thickness=0.3, color=GRIS, spaceAfter=4))
 
@@ -550,7 +697,6 @@ def doc_recibo_tasa_inscripcion(session, output_path: str, codigo_establecimient
 
     story.append(HRFlowable(width="100%", thickness=0.3, color=GRIS, spaceAfter=4))
 
-    # Importe total
     total_data = [[
         Paragraph("Importe Total:",
                   ParagraphStyle("it", fontName="Helvetica-Bold", fontSize=12,
@@ -563,7 +709,6 @@ def doc_recibo_tasa_inscripcion(session, output_path: str, codigo_establecimient
 
     story.append(Spacer(1, 0.8*cm))
 
-    # Fecha y sello
     fecha_lugar_data = [[
         Paragraph(
             f"Fighiera  {_fecha_larga_es()}",
@@ -589,7 +734,7 @@ def doc_recibo_tasa_inscripcion(session, output_path: str, codigo_establecimient
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# DOCUMENTO 4: DETALLE DE DEUDA CON INTERESES
+# DOCUMENTO 5: DETALLE DE DEUDA CON INTERESES
 # ════════════════════════════════════════════════════════════════════════════
 
 def doc_detalle_deuda(session, output_path: str, codigo_establecimiento: str,
@@ -605,7 +750,6 @@ def doc_detalle_deuda(session, output_path: str, codigo_establecimiento: str,
         q = q.filter(Deuda.pago == False)
     deudas = q.order_by(Deuda.anio, Deuda.periodo).all()
 
-    # Calcular intereses de cada deuda
     filas = []
     total_a_pagar = 0.0
     for d in deudas:
@@ -635,7 +779,6 @@ def doc_detalle_deuda(session, output_path: str, codigo_establecimiento: str,
     _cabecera_institucional(story, "Detalle de Deuda\nRecibo", {})
     story.append(Spacer(1, 0.3*cm))
 
-    # Encabezado del establecimiento
     story.append(Paragraph(
         f"Código Establecimiento: <b>{e.codigo_establecimiento}</b>",
         ParagraphStyle("f", fontName="Helvetica", fontSize=11)))
@@ -644,7 +787,6 @@ def doc_detalle_deuda(session, output_path: str, codigo_establecimiento: str,
         ParagraphStyle("f", fontName="Helvetica", fontSize=11)))
     story.append(Spacer(1, 0.4*cm))
 
-    # Tabla de deudas
     encabezado = [
         Paragraph("<b>Período</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
                   fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
@@ -677,13 +819,11 @@ def doc_detalle_deuda(session, output_path: str, codigo_establecimiento: str,
 
     t = Table(tabla_data, colWidths=col_w, repeatRows=1)
     style = TableStyle([
-        # Encabezado
         ("BACKGROUND",    (0,0), (-1,0), AZUL),
         ("TEXTCOLOR",     (0,0), (-1,0), colors.white),
         ("FONTNAME",      (0,0), (-1,0), "Helvetica-Bold"),
         ("FONTSIZE",      (0,0), (-1,0), 9),
         ("ALIGN",         (0,0), (-1,0), "CENTER"),
-        # Cuerpo
         ("FONTNAME",      (0,1), (-1,-1), "Helvetica"),
         ("FONTSIZE",      (0,1), (-1,-1), 9),
         ("ALIGN",         (0,1), (-1,-1), "CENTER"),
@@ -695,7 +835,6 @@ def doc_detalle_deuda(session, output_path: str, codigo_establecimiento: str,
     t.setStyle(style)
     story.append(t)
 
-    # Total a pagar
     story.append(Spacer(1, 0.4*cm))
     total_data = [[
         Paragraph("TOTAL A PAGAR:",
@@ -707,7 +846,6 @@ def doc_detalle_deuda(session, output_path: str, codigo_establecimiento: str,
     ]]
     story.append(Table(total_data, colWidths=[14*cm, 4*cm]))
 
-    # Fecha
     story.append(Spacer(1, 0.5*cm))
     story.append(Paragraph(
         f"Fighiera  {_fecha_larga_es()}",
@@ -716,7 +854,7 @@ def doc_detalle_deuda(session, output_path: str, codigo_establecimiento: str,
     ))
     story.append(Spacer(1, 0.3*cm))
     story.append(Paragraph(
-        f"Página 1 de 1",
+        "Página 1 de 1",
         ParagraphStyle("pag", fontName="Helvetica", fontSize=8,
                        textColor=GRIS, alignment=TA_LEFT)
     ))
@@ -726,15 +864,10 @@ def doc_detalle_deuda(session, output_path: str, codigo_establecimiento: str,
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# DOCUMENTO 5: CERTIFICADO DE INSCRIPCIÓN
+# DOCUMENTO 6: CERTIFICADO DE INSCRIPCIÓN
 # ════════════════════════════════════════════════════════════════════════════
 
 def doc_certificado_inscripcion(session, output_path: str, codigo_establecimiento: str):
-    """
-    Replica el Certificado de Inscripción oficial del sistema viejo.
-    Incluye datos del establecimiento, titular, rubro/anexos, contacto,
-    y espacios para firmas de Audito ASSAL y Presidente Comunal.
-    """
     from database.models import Establecimiento, Anexo1, Anexo2, Anexo3
 
     e = session.query(Establecimiento).get(codigo_establecimiento.upper())
@@ -766,11 +899,9 @@ def doc_certificado_inscripcion(session, output_path: str, codigo_establecimient
     )
     story = []
 
-    # ── Encabezado institucional ─────────────────────────────────────────────
     _cabecera_institucional(story, "Certificado de Inscripción", {})
     story.append(Spacer(1, 0.3*cm))
 
-    # Expediente Nº (alineado a la derecha, como en el original)
     story.append(Paragraph(
         f"Expediente Nº  <b>{nro_expediente}</b>",
         ParagraphStyle("exp", fontName="Helvetica", fontSize=11,
@@ -778,7 +909,6 @@ def doc_certificado_inscripcion(session, output_path: str, codigo_establecimient
     ))
     story.append(Spacer(1, 0.5*cm))
 
-    # ── Datos del establecimiento ────────────────────────────────────────────
     def fila2(lbl1, val1, lbl2, val2, w1=4*cm, w2=7*cm, w3=3*cm, w4=4*cm):
         data = [[
             Paragraph(f"{lbl1}:", ParagraphStyle("l", fontName="Helvetica-Bold", fontSize=10)),
@@ -813,7 +943,6 @@ def doc_certificado_inscripcion(session, output_path: str, codigo_establecimient
     ))
 
     tel_comercial = (e.telefono_establecimiento or "") if e else ""
-    tel_particular = (inscripto.telefono or inscripto.telefono_movil or "") if inscripto else ""
     story.append(fila2(
         "Teléfono Comercial", tel_comercial,
         "Nº", str(e.numero_establecimiento or ""),
@@ -823,7 +952,6 @@ def doc_certificado_inscripcion(session, output_path: str, codigo_establecimient
     story.append(Spacer(1, 0.3*cm))
     story.append(HRFlowable(width="100%", thickness=0.4, color=GRIS, spaceAfter=6))
 
-    # ── Datos del titular ────────────────────────────────────────────────────
     titular_nombre = ""
     if inscripto:
         titular_nombre = f"{(inscripto.apellido_razonsocial or '').upper()} {(inscripto.nombres or '').upper()}".strip()
@@ -862,14 +990,12 @@ def doc_certificado_inscripcion(session, output_path: str, codigo_establecimient
     story.append(Spacer(1, 0.3*cm))
     story.append(HRFlowable(width="100%", thickness=0.4, color=GRIS, spaceAfter=6))
 
-    # ── Rubro y Anexos ───────────────────────────────────────────────────────
     story.append(fila1("Rubro", rubro_nombre))
     story.append(fila1("Anexos", anexos_str))
 
     story.append(Spacer(1, 0.3*cm))
     story.append(HRFlowable(width="100%", thickness=0.4, color=GRIS, spaceAfter=6))
 
-    # ── Observaciones ────────────────────────────────────────────────────────
     story.append(Paragraph(
         "<b>Observaciones</b>",
         ParagraphStyle("ot", fontName="Helvetica-Bold", fontSize=10, spaceAfter=4)
@@ -879,7 +1005,6 @@ def doc_certificado_inscripcion(session, output_path: str, codigo_establecimient
 
     story.append(Spacer(1, 0.5*cm))
 
-    # ── Texto legal ──────────────────────────────────────────────────────────
     story.append(Paragraph(
         "Se extiende el presente Certificado en el Área de Alimentos de la Comuna de Fighiera.",
         ParagraphStyle("legal", fontName="Helvetica-Oblique", fontSize=10,
@@ -892,7 +1017,6 @@ def doc_certificado_inscripcion(session, output_path: str, codigo_establecimient
                        alignment=TA_RIGHT, spaceAfter=12)
     ))
 
-    # ── Firmas ───────────────────────────────────────────────────────────────
     story.append(Spacer(1, 1.2*cm))
     firmas_data = [[
         Paragraph(
