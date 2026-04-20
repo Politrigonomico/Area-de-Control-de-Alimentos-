@@ -337,15 +337,18 @@ class EstablecimientoDialog(tk.Toplevel):
 
         session = get_session()
         rubros = session.query(Rubro).order_by(Rubro.nombre).all()
-        self._rubros_map = {f"{r.nombre} ($ {r.valor:,.0f})": r.id_rubro for r in rubros}
+        self._rubros_map   = {f"{r.nombre} ($ {r.valor:,.0f})": r.id_rubro for r in rubros}
+        self._rubros_valor = {r.id_rubro: r.valor for r in rubros}
         session.close()
         rubro_vals = [""] + list(self._rubros_map.keys())
 
-        for i, (lbl, attr_cb, attr_monto) in enumerate([
-            ("Rubro principal",  "e_rubro",  "e_monto"),
-            ("Anexo 1",          "e_anexo1", "e_monto1"),
-            ("Anexo 2",          "e_anexo2", "e_monto2"),
-            ("Anexo 3",          "e_anexo3", "e_monto3"),
+        self._labels_diferencia = {}  # guardamos los labels para actualizarlos
+
+        for i, (lbl, attr_cb, attr_monto, attr_lbl) in enumerate([
+            ("Rubro principal", "e_rubro",  "e_monto",  "lbl_dif_0"),
+            ("Anexo 1",         "e_anexo1", "e_monto1", "lbl_dif_1"),
+            ("Anexo 2",         "e_anexo2", "e_monto2", "lbl_dif_2"),
+            ("Anexo 3",         "e_anexo3", "e_monto3", "lbl_dif_3"),
         ]):
             ttk.Label(f, text=lbl).grid(row=i, column=0, sticky="w", pady=5, padx=(0, 8))
             cb = ttk.Combobox(f, values=rubro_vals, width=34, state="readonly")
@@ -353,9 +356,31 @@ class EstablecimientoDialog(tk.Toplevel):
             setattr(self, attr_cb, cb)
 
             ttk.Label(f, text="Monto $").grid(row=i, column=2, sticky="w", padx=(12, 8))
-            ent = ttk.Entry(f, width=14)
+            ent = ttk.Entry(f, width=14, state="disabled")
             ent.grid(row=i, column=3, sticky="w", pady=5)
             setattr(self, attr_monto, ent)
+
+            # Label de diferencia — inicialmente vacío
+            lbl_dif = ttk.Label(f, text="", font=("Segoe UI", 9),
+                                foreground="#b7791f")  # naranja
+            lbl_dif.grid(row=i, column=4, sticky="w", padx=(6, 0))
+            self._labels_diferencia[attr_lbl] = (lbl_dif, ent)
+            setattr(self, attr_lbl + "_widget", lbl_dif)
+
+            # Al elegir rubro: actualizar monto Y mostrar diferencia si existe
+            def _on_rubro_select(event, entry=ent, combo=cb, lbl_key=attr_lbl):
+                key = combo.get()
+                rid = self._rubros_map.get(key)
+                if rid:
+                    valor_actual = self._rubros_valor.get(rid, 0)
+                    entry.configure(state="normal")
+                    entry.delete(0, "end")
+                    entry.insert(0, f"{valor_actual:.2f}")
+                    entry.configure(state="disabled")
+                    # Al elegir de nuevo, el monto se sincroniza — limpiar aviso
+                    lbl_w, _ = self._labels_diferencia[lbl_key]
+                    lbl_w.configure(text="")
+            cb.bind("<<ComboboxSelected>>", _on_rubro_select)
 
     def _build_obs(self, f):
         ttk.Label(f, text="Solicitudes").pack(anchor="w")
@@ -412,7 +437,29 @@ class EstablecimientoDialog(tk.Toplevel):
         set_entry(self.e_monto3, str(e.monto3 or 0))
 
         session.close()
+    # Después del bloque que carga los montos (el for loop con configure state)
+# Agregar esto al final de _load:
 
+        def _verificar_diferencia(attr_lbl, monto_guardado, rubro_cb):
+            """Muestra aviso si el monto guardado difiere del valor actual del rubro."""
+            key = rubro_cb.get()
+            rid = self._rubros_map.get(key)
+            if not rid:
+                return
+            valor_rubro_actual = self._rubros_valor.get(rid, 0)
+            if abs(monto_guardado - valor_rubro_actual) > 0.01:
+                lbl_w, _ = self._labels_diferencia[attr_lbl]
+                lbl_w.configure(
+                    text=f"⚠ Rubro actual: $ {valor_rubro_actual:,.2f}\n"
+                        f"(guardado: $ {monto_guardado:,.2f})"
+                )
+
+        _verificar_diferencia("lbl_dif_0", e.monto or 0,  self.e_rubro)
+        _verificar_diferencia("lbl_dif_1", e.monto1 or 0, self.e_anexo1)
+        _verificar_diferencia("lbl_dif_2", e.monto2 or 0, self.e_anexo2)
+        _verificar_diferencia("lbl_dif_3", e.monto3 or 0, self.e_anexo3)
+
+        
     def _guardar(self):
         codigo = get_entry(self.e_codigo).upper()
         nombre = get_entry(self.e_nombre)
@@ -434,7 +481,7 @@ class EstablecimientoDialog(tk.Toplevel):
                 return
             e = Establecimiento(codigo_establecimiento=codigo)
             session.add(e)
-
+    
         e.nombre_establecimiento     = nombre.upper()
         e.estado_tramite             = self.e_estado.get() or None
         e.domicilio_establecimiento  = get_entry(self.e_domicilio)

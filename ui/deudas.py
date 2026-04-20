@@ -5,6 +5,10 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime
 
+from reports.documentos_institucionales import doc_detalle_deuda, _auto_path, abrir_pdf
+from database.db import get_session
+from database.models import Deuda
+from utils.ui_helpers import error_dialog
 from database.db import get_session
 from database.models import Deuda, Establecimiento, Emision
 from utils.ui_helpers import (
@@ -56,6 +60,8 @@ class DeudasFrame(ttk.Frame):
         # Acciones
         ttk.Button(bar, text="💰  Registrar pago", style="Success.TButton",
                    command=self._registrar_pago).pack(side="right", padx=4)
+        ttk.Button(bar, text="↩  Cancelar pago", style="Danger.TButton",
+                   command=self._cancelar_pago).pack(side="right", padx=4)
         ttk.Button(bar, text="＋  Nueva deuda",
                    command=self._nueva_deuda).pack(side="right", padx=4)
         ttk.Button(bar, text="🖨  Imprimir recibo",
@@ -68,7 +74,8 @@ class DeudasFrame(ttk.Frame):
 
         # Treeview
         self.tree, _ = scrolled_treeview(self, self.COLS, self.HEADINGS, self.WIDTHS, height=20)
-        self.tree.bind("<Double-1>", lambda e: self._registrar_pago())
+        self.tree.configure(selectmode="extended")   # permite Ctrl+clic y Shift+clic
+        # doble clic eliminado — el pago ahora es solo por botón explícito
 
     def refresh(self):
         session = get_session()
@@ -143,42 +150,195 @@ class DeudasFrame(ttk.Frame):
         )
 
     def _imprimir_recibo(self):
-        from reports.documentos_institucionales import doc_detalle_deuda, _auto_path, abrir_pdf
-        from database.db import get_session
-        from database.models import Deuda
-        from utils.ui_helpers import error_dialog
-        did = self._selected_deuda_id()
-        if did is None:
+        """Abre menú con opciones de impresión."""
+        ids = self._selected_ids()
+        if not ids:
             return
+
+        # Tomar código del primer seleccionado
         session = get_session()
-        d = session.query(Deuda).get(did)
+        d = session.query(Deuda).get(ids[0])
         if not d:
             session.close()
             return
         codigo = d.codigo_establecimiento
         session.close()
+
+        # Menú contextual de opciones
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(
+            label="📄  Solo deudas impagas",
+            command=lambda: self._generar_pdf_filtrado(codigo, solo_impagas=True, pagadas=False)
+        )
+        menu.add_command(
+            label="✅  Solo deudas pagadas",
+            command=lambda: self._generar_pdf_filtrado(codigo, solo_impagas=False, pagadas=True)
+        )
+        menu.add_separator()
+        menu.add_command(
+            label="📋  Historial completo",
+            command=lambda: self._generar_pdf_filtrado(codigo, solo_impagas=False, pagadas=False)
+        )
         try:
-            path = _auto_path(f"deuda_{codigo}.pdf")
+            menu.tk_popup(self.winfo_pointerx(), self.winfo_pointery())
+        finally:
+            menu.grab_release()
+
+    def _generar_pdf_filtrado(self, codigo: str, solo_impagas: bool, pagadas: bool):
+        """Genera PDF del establecimiento con el filtro indicado."""
+        from reports.documentos_institucionales import doc_detalle_deuda, _auto_path, abrir_pdf
+        from database.db import get_session
+        from database.models import Deuda
+        from utils.ui_helpers import error_dialog
+        from datetime import datetime as _dt
+
+        # Determinar sufijo del archivo y filtro de query
+        if solo_impagas:
+            sufijo  = "impagas"
+            filtro  = True   # solo_impagas=True en doc_detalle_deuda
+        elif pagadas:
+            sufijo  = "pagadas"
+            filtro  = None   # manejo especial abajo
+        else:
+            sufijo  = "completo"
+            filtro  = False  # solo_impagas=False muestra todo
+
+        ts   = _dt.now().strftime("%Y%m%d_%H%M%S")
+        path = _auto_path(f"deuda_{codigo}_{sufijo}_{ts}.pdf")
+
+        try:
             session = get_session()
-            doc_detalle_deuda(session, path, codigo, solo_impagas=True)
+            if pagadas:
+                # doc_detalle_deuda no tiene filtro "solo pagadas" —
+                # creamos una versión con IDs específicos usando doc_recibo_transaccion
+                from reports.documentos_institucionales import doc_recibo_transaccion
+                ids_pagadas = [
+                    d.codigo_deuda
+                    for d in session.query(Deuda)
+                    .filter_by(codigo_establecimiento=codigo.upper(), pago=True)
+                    .all()
+                ]
+                if not ids_pagadas:
+                    from utils.ui_helpers import info_dialog
+                    info_dialog(self, "Sin datos", "Este establecimiento no tiene deudas pagadas.")
+                    session.close()
+                    return
+                doc_recibo_transaccion(session, path, ids_pagadas)
+            else:
+                doc_detalle_deuda(session, path, codigo, solo_impagas=filtro)
             session.close()
             abrir_pdf(path)
         except Exception as ex:
-            error_dialog(self, "Error", str(ex))
+            error_dialog(self, "Error al generar PDF", str(ex))
 
-    def _selected_deuda_id(self):
+    def _imprimir_recibo_ids(self, ids: list[int]):
+            """Imprime recibo de transacción para una lista específica de IDs de deuda."""
+            from reports.documentos_institucionales import doc_recibo_transaccion, _auto_path, abrir_pdf
+            from utils.ui_helpers import error_dialog
+            # Tomar código estab del primer ID para el nombre del archivo
+            session = get_session()
+            d = session.query(Deuda).get(ids[0])
+            codigo = d.codigo_establecimiento if d else "EST"
+            session.close()
+            try:
+                from datetime import datetime as _dt
+                ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+                path = _auto_path(f"recibo_transaccion_{codigo}_{ts}.pdf")
+                session = get_session()
+                doc_recibo_transaccion(session, path, ids)
+                session.close()
+                abrir_pdf(path)
+            except Exception as ex:
+                error_dialog(self, "Error al generar recibo", str(ex))
+
+    def _selected_ids(self) -> list[int]:
+        """Devuelve lista de IDs de las filas seleccionadas."""
         sel = self.tree.selection()
         if not sel:
-            messagebox.showwarning("Selección", "Seleccioná una deuda primero.")
-            return None
-        return int(sel[0])
+            messagebox.showwarning("Selección", "Seleccioná al menos una deuda primero.")
+            return []
+        return [int(iid) for iid in sel]
+
+    # Mantener por compatibilidad con otros métodos que usan id único
+    def _selected_deuda_id(self):
+        ids = self._selected_ids()
+        return ids[0] if ids else None
 
     def _registrar_pago(self):
-        did = self._selected_deuda_id()
-        if did is None:
+        ids = self._selected_ids()
+        if not ids:
             return
-        dlg = PagoDialog(self, did)
-        self.wait_window(dlg)
+        # Si solo hay una deuda seleccionada: flujo actual con diálogo
+        if len(ids) == 1:
+            dlg = PagoDialog(self, ids[0])
+            self.wait_window(dlg)
+            self.refresh()
+            return
+        # Múltiples deudas: confirmar y aplicar fecha/medio en lote
+        if not confirm_dialog(self, "Registrar pago múltiple",
+                              f"¿Registrar pago de {len(ids)} deudas seleccionadas?\n"
+                              "Se usará la fecha de hoy y medio EFECTIVO.\n"
+                              "Podés editar cada una individualmente después."):
+            return
+        session = get_session()
+        deudas_pagadas = []
+        try:
+            for did in ids:
+                d = session.query(Deuda).get(did)
+                if d and not d.pago:
+                    d.pago          = True
+                    d.fecha_pago    = datetime.now()
+                    d.monto_abonado = d.importe
+                    d.medio_pago    = "EFECTIVO"
+                    deudas_pagadas.append(did)
+            session.commit()
+        except Exception as ex:
+            session.rollback()
+            error_dialog(self, "Error", str(ex))
+            session.close()
+            return
+        session.close()
+        self.refresh()
+        if deudas_pagadas and messagebox.askyesno(
+                "Pago registrado",
+                f"{len(deudas_pagadas)} deudas marcadas como pagadas.\n"
+                "¿Querés imprimir el recibo de esta transacción?"):
+            self._imprimir_recibo_ids(deudas_pagadas)
+
+    def _cancelar_pago(self):
+        """Revierte el estado de pago de las deudas seleccionadas."""
+        ids = self._selected_ids()
+        if not ids:
+            return
+        # Filtrar solo las que están pagadas
+        session = get_session()
+        deudas_pagadas = [
+            session.query(Deuda).get(did)
+            for did in ids
+            if session.query(Deuda).get(did) and session.query(Deuda).get(did).pago
+        ]
+        session.close()
+        if not deudas_pagadas:
+            messagebox.showinfo("Sin cambios", "Ninguna de las deudas seleccionadas está marcada como pagada.")
+            return
+        if not confirm_dialog(self, "Cancelar pago",
+                              f"¿Revertir el pago de {len(deudas_pagadas)} deuda(s) a IMPAGO?"):
+            return
+        session = get_session()
+        try:
+            for d in deudas_pagadas:
+                d_db = session.query(Deuda).get(d.codigo_deuda)
+                d_db.pago          = False
+                d_db.fecha_pago    = None
+                d_db.monto_abonado = 0.0
+                d_db.medio_pago    = None
+            session.commit()
+            info_dialog(self, "Listo", f"{len(deudas_pagadas)} pago(s) revertidos a IMPAGO.")
+        except Exception as ex:
+            session.rollback()
+            error_dialog(self, "Error", str(ex))
+        finally:
+            session.close()
         self.refresh()
 
     def _nueva_deuda(self):
@@ -194,16 +354,18 @@ class PagoDialog(tk.Toplevel):
         self.deuda_id = deuda_id
         self.title("Registrar pago")
         self.resizable(False, False)
-        center_window(self, 420, 310)
+        center_window(self, 420, 360)
         self.grab_set()
         self._build()
         self._load()
 
-    def _imprimir_recibo_desde_dialogo(self, deuda_id: int):
-        from reports.documentos_institucionales import doc_detalle_deuda, _auto_path, abrir_pdf
+    def _imprimir_recibo_transaccion(self, deuda_id: int):
+        """Imprime recibo solo con la deuda de esta transacción."""
+        from reports.documentos_institucionales import doc_recibo_transaccion, _auto_path, abrir_pdf
         from database.db import get_session
         from database.models import Deuda
         from utils.ui_helpers import error_dialog
+        from datetime import datetime as _dt
         session = get_session()
         d = session.query(Deuda).get(deuda_id)
         if not d:
@@ -212,10 +374,10 @@ class PagoDialog(tk.Toplevel):
         codigo = d.codigo_establecimiento
         session.close()
         try:
-            path = _auto_path(f"recibo_pago_{codigo}.pdf")
+            ts   = _dt.now().strftime("%Y%m%d_%H%M%S")
+            path = _auto_path(f"recibo_transaccion_{codigo}_{ts}.pdf")
             session = get_session()
-            # Solo mostrar la deuda específica en el recibo de pago
-            doc_detalle_deuda(session, path, codigo, solo_impagas=False)
+            doc_recibo_transaccion(session, path, [deuda_id])
             session.close()
             abrir_pdf(path)
         except Exception as ex:
@@ -261,7 +423,7 @@ class PagoDialog(tk.Toplevel):
         self.e_medio.set("EFECTIVO")
 
         bar = ttk.Frame(f)
-        bar.grid(row=7, column=0, columnspan=2, pady=(16, 0), sticky="e")
+        bar.grid(row=8, column=0, columnspan=2, pady=(16, 8), sticky="e")
         ttk.Button(bar, text="Guardar", style="Success.TButton",
                    command=self._guardar).pack(side="right", padx=4)
         ttk.Button(bar, text="Cancelar", command=self.destroy).pack(side="right")
@@ -298,7 +460,7 @@ class PagoDialog(tk.Toplevel):
             if messagebox.askyesno("Guardado",
                                    "Pago registrado correctamente.\n¿Querés imprimir el recibo?",
                                    parent=self):
-                self._imprimir_recibo_desde_dialogo(self.deuda_id)
+                self._imprimir_recibo_transaccion(self.deuda_id)
             self.destroy()
         except Exception as ex:
             session.rollback()
@@ -331,9 +493,52 @@ class DeudaDialog(tk.Toplevel):
             for e in estabs}
         session.close()
 
+        lista_original = list(self._estab_map.keys())
+
         ttk.Label(f, text="Establecimiento *").grid(row=0, column=0, sticky="w", pady=5, padx=(0, 8))
-        self.e_estab = ttk.Combobox(f, values=list(self._estab_map.keys()), width=34, state="readonly")
+        
+        self.e_estab = ttk.Entry(f, width=34)
         self.e_estab.grid(row=0, column=1, sticky="ew", pady=5)
+
+        self.lista_sugerencias = tk.Listbox(f, height=6)
+
+        def actualizar_sugerencias(event):
+            if event.keysym in ('Up', 'Down', 'Return', 'Left', 'Right', 'Tab'):
+                return
+            
+            texto = self.e_estab.get().lower()
+            self.lista_sugerencias.delete(0, tk.END)
+            
+            if texto == '':
+                self.lista_sugerencias.place_forget()
+                return
+
+            coincidencias = [item for item in lista_original if texto in item.lower()]
+            
+            if coincidencias:
+                for item in coincidencias:
+                    self.lista_sugerencias.insert(tk.END, item)
+                
+                self.update_idletasks()
+                self.lista_sugerencias.place(in_=self.e_estab, x=0, rely=1, relwidth=1.0)
+                self.lista_sugerencias.lift()
+            else:
+                self.lista_sugerencias.place_forget()
+
+        def seleccionar_item(event):
+            if not self.lista_sugerencias.curselection():
+                return
+            seleccion = self.lista_sugerencias.get(self.lista_sugerencias.curselection())
+            self.e_estab.delete(0, tk.END)
+            self.e_estab.insert(0, seleccion)
+            self.lista_sugerencias.place_forget()
+            self.e_estab.focus_set()
+
+        self.e_estab.bind('<KeyRelease>', actualizar_sugerencias)
+        self.lista_sugerencias.bind('<ButtonRelease-1>', seleccionar_item)
+        
+        self.bind('<Button-1>', lambda e: self.lista_sugerencias.place_forget() 
+                  if e.widget != self.lista_sugerencias and e.widget != self.e_estab else None)
 
         ttk.Label(f, text="Año *").grid(row=1, column=0, sticky="w", pady=5, padx=(0, 8))
         self.e_anio = ttk.Entry(f, width=8)
@@ -354,8 +559,7 @@ class DeudaDialog(tk.Toplevel):
 
         bar = ttk.Frame(f)
         bar.grid(row=5, column=0, columnspan=2, pady=(16, 0), sticky="e")
-        ttk.Button(bar, text="Guardar", style="Success.TButton",
-                   command=self._guardar).pack(side="right", padx=4)
+        ttk.Button(bar, text="Guardar", style="Success.TButton", command=self._guardar).pack(side="right", padx=4)
         ttk.Button(bar, text="Cancelar", command=self.destroy).pack(side="right")
 
     def _guardar(self):

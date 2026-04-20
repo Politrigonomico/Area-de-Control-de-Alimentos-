@@ -6,14 +6,14 @@ import sys
 import os
 import tkinter as tk
 from tkinter import ttk, messagebox
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from database.db import init_db
 from utils.ui_helpers import (
     COLORS, FONT_NORMAL,
     center_window, configure_treeview_style,
 )
-
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 class App(tk.Tk):
@@ -25,7 +25,7 @@ class App(tk.Tk):
         ("🔍",  "Auditorías",       "auditorias"),
         ("🧼",  "Sanidad",          "sanidad"),
         ("📋",  "Rubros / Emisión", "rubros"),
-        ("📄",  "Reportes PDF",     "reportes"),
+        # ("📄",  "Reportes PDF",     "reportes"),  # temporalmente deshabilitado
     ]
 
     def __init__(self):

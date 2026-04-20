@@ -8,7 +8,6 @@ Documentos:
   3. Recibo de Tasa de Inscripción Área de Alimentos
   4. Detalle de Deuda / Recibo con intereses
 """
-import os as _os
 from datetime import datetime
 import locale
 
@@ -33,6 +32,7 @@ from reportlab.platypus import (
     HRFlowable, KeepTogether,
 )
 from reportlab.pdfgen import canvas as pdfcanvas
+from reportlab.lib.utils import ImageReader
 
 # ── Constantes institucionales ───────────────────────────────────────────────
 INSTITUCION   = "Comuna de Fighiera"
@@ -42,9 +42,14 @@ TELEFONO      = "Teléfono: (03402) 470731"
 EMAIL         = "e-mail: assalfighiera@yahoo.com.ar"
 TASA_MENSUAL  = 3  # % mensual de interés por mora
 
-# Carpeta donde se guardan todos los PDFs generados automáticamente
+# Logo institucional
+import os as _os_logo
+LOGO_PATH = _os_logo.path.join(_os_logo.path.dirname(_os_logo.path.abspath(__file__)), "logo_comuna.png")
 
-PDF_DIR = _os.path.join(_os.path.expanduser("~"), "Documentos", "AlimentosArchivos")
+# Carpeta donde se guardan todos los PDFs generados automáticamente
+import os as _os
+PDF_DIR = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                        "pdfs_generados")
 _os.makedirs(PDF_DIR, exist_ok=True)
 
 def _auto_path(nombre_archivo: str) -> str:
@@ -95,17 +100,47 @@ def _calcular_interes(importe: float, vencimiento: datetime):
     return meses, int_acum, actualizado
 
 def _cabecera_institucional(story, titulo: str, styles):
-    """Bloque de encabezado común a todos los documentos."""
-    # Encabezado con nombre institución y título del documento
-    header_data = [[
-        Paragraph(
+    """Bloque de encabezado común a todos los documentos — con logo."""
+    from reportlab.platypus import Image as RLImage
+
+    # Columna izquierda: logo + datos institucionales
+    col_izq = []
+
+    # Logo (si existe el archivo)
+    if _os_logo.path.exists(LOGO_PATH):
+        # 212x238px original — mostramos a 1.4cm de alto proporcional
+        logo_h = 1.4 * cm
+        logo_w = logo_h * (212 / 238)
+        logo_img = RLImage(LOGO_PATH, width=logo_w, height=logo_h)
+        # Combinar logo e institución en una tabla interna
+        inst_txt = Paragraph(
             f"<b>{INSTITUCION}</b><br/>"
             f"<font size='10'>{AREA}</font><br/>"
             f"<font size='8'>{DIRECCION}</font><br/>"
             f"<font size='8'>{TELEFONO}</font>",
-            ParagraphStyle("hdr", fontName="Helvetica", fontSize=12,
-                           leading=16, alignment=TA_LEFT)
-        ),
+            ParagraphStyle("hdr", fontName="Helvetica", fontSize=12, leading=16)
+        )
+        inner = Table([[logo_img, inst_txt]],
+                      colWidths=[logo_w + 0.3*cm, 10*cm - logo_w])
+        inner.setStyle(TableStyle([
+            ("VALIGN",       (0,0), (-1,-1), "MIDDLE"),
+            ("LEFTPADDING",  (1,0), (1,0),   6),
+            ("RIGHTPADDING", (0,0), (-1,-1), 0),
+            ("TOPPADDING",   (0,0), (-1,-1), 0),
+            ("BOTTOMPADDING",(0,0), (-1,-1), 0),
+        ]))
+        col_izq_cell = inner
+    else:
+        col_izq_cell = Paragraph(
+            f"<b>{INSTITUCION}</b><br/>"
+            f"<font size='10'>{AREA}</font><br/>"
+            f"<font size='8'>{DIRECCION}</font><br/>"
+            f"<font size='8'>{TELEFONO}</font>",
+            ParagraphStyle("hdr", fontName="Helvetica", fontSize=12, leading=16)
+        )
+
+    header_data = [[
+        col_izq_cell,
         Paragraph(
             f"<b>{titulo}</b>",
             ParagraphStyle("tit", fontName="Helvetica-Bold", fontSize=14,
@@ -178,7 +213,7 @@ def doc_acta_auditoria(session, output_path: str, auditoria_id: int):
     doc = SimpleDocTemplate(
         output_path, pagesize=A4,
         leftMargin=2*cm, rightMargin=2*cm,
-        topMargin=2*cm, bottomMargin=2*cm,
+        topMargin=1.5*cm, bottomMargin=1.5*cm,
     )
     styles = {}
     story  = []
@@ -245,11 +280,11 @@ def doc_acta_auditoria(session, output_path: str, auditoria_id: int):
 
     # Secciones con cuadros
     for titulo, texto, altura in [
-        ("Alcances de la Auditoría",  a.alcances or "",         2.0*cm),
-        ("Conformidades",             a.conformidades or "",    2.5*cm),
-        ("No Conformidades",          a.no_conformidades or "", 2.5*cm),
-        ("Conclusiones",              a.conclusiones or "",     2.5*cm),
-        ("Material Adjunto",          a.material_adjunto or "", 2.0*cm),
+        ("Alcances de la Auditoría",  a.alcances or "",         1.8*cm),
+        ("Conformidades",             a.conformidades or "",    2.2*cm),
+        ("No Conformidades",          a.no_conformidades or "", 2.2*cm),
+        ("Conclusiones",              a.conclusiones or "",     2.2*cm),
+        ("Material Adjunto",          a.material_adjunto or "", 1.5*cm),
     ]:
         story.append(_seccion(titulo))
         story.append(_caja_texto(texto, altura))
@@ -265,7 +300,7 @@ def doc_acta_auditoria(session, output_path: str, auditoria_id: int):
     story.append(Table(pie_data, colWidths=[9*cm, 9*cm]))
 
     # Firmas
-    story.append(Spacer(1, 1.5*cm))
+    story.append(Spacer(1, 0.5*cm))
     firma_data = [[
         Paragraph("." * 35 + "<br/>Firma del Auditado",
                   ParagraphStyle("f", fontName="Helvetica", fontSize=9,
@@ -275,7 +310,7 @@ def doc_acta_auditoria(session, output_path: str, auditoria_id: int):
                                  alignment=TA_CENTER)),
     ]]
     story.append(Table(firma_data, colWidths=[9*cm, 9*cm]))
-    story.append(Spacer(1, 1*cm))
+    story.append(Spacer(1, 0.5*cm))
     story.append(Paragraph("." * 35 + "<br/>Aclaración",
                             ParagraphStyle("f", fontName="Helvetica", fontSize=9,
                                            alignment=TA_CENTER)))
@@ -288,16 +323,48 @@ def doc_acta_auditoria(session, output_path: str, auditoria_id: int):
 # DOCUMENTO 2: RECIBO DE PAGO DE INICIO DE TRÁMITE
 # ════════════════════════════════════════════════════════════════════════════
 
-def doc_recibo_inicio_tramite(session, output_path: str, inscripto_id: int):
-    from database.models import Inscripto
-    from sqlalchemy import func
+def doc_recibo_transaccion(session, output_path: str, codigos_deuda: list):
+    """
+    Genera un recibo con ÚNICAMENTE las deudas indicadas por ID.
+    Usado para imprimir el recibo de la transacción que se acaba de registrar.
+    """
+    from database.models import Deuda, Establecimiento
 
-    i = session.query(Inscripto).get(inscripto_id)
-    if not i:
-        raise ValueError(f"Inscripto {inscripto_id} no encontrado.")
+    if not codigos_deuda:
+        raise ValueError("No se indicaron deudas para el recibo.")
 
-    # Número de recibo = código inscripción (como en el doc original)
-    nro_recibo = i.codigo_inscripcion
+    # Cargar las deudas indicadas
+    deudas = session.query(Deuda).filter(
+        Deuda.codigo_deuda.in_(codigos_deuda)
+    ).order_by(Deuda.anio, Deuda.periodo).all()
+
+    if not deudas:
+        raise ValueError("No se encontraron las deudas indicadas.")
+
+    # Tomar el establecimiento de la primera deuda
+    codigo_estab = deudas[0].codigo_establecimiento
+    e = session.query(Establecimiento).get(codigo_estab.upper())
+    nombre_estab = (e.nombre_establecimiento or "").upper() if e else codigo_estab
+
+    filas = []
+    total_a_pagar = 0.0
+    for d in deudas:
+        if d.vencimiento:
+            meses, int_acum, actualizado = _calcular_interes(d.importe, d.vencimiento)
+        else:
+            meses, int_acum, actualizado = 0, 0, d.importe
+        total_a_pagar += actualizado
+        filas.append({
+            "periodo":    d.periodo,
+            "anio":       d.anio,
+            "nominal":    d.importe,
+            "tiempo":     meses,
+            "tasa":       TASA_MENSUAL,
+            "int_acum":   int_acum,
+            "actualizado":actualizado,
+            "medio":      d.medio_pago or "EFECTIVO",
+            "fecha_pago": _fmt_fecha(d.fecha_pago),
+        })
 
     doc = SimpleDocTemplate(
         output_path, pagesize=A4,
@@ -306,97 +373,90 @@ def doc_recibo_inicio_tramite(session, output_path: str, inscripto_id: int):
     )
     story = []
 
-    _cabecera_institucional(story, "Recibo de Pago de Inicio de Trámite", {})
+    _cabecera_institucional(story, "Recibo de Pago\nTransacción", {})
+    story.append(Spacer(1, 0.3*cm))
 
-    story.append(Spacer(1, 0.5*cm))
+    story.append(Paragraph(
+        f"Código Establecimiento: <b>{codigo_estab}</b>",
+        ParagraphStyle("f", fontName="Helvetica", fontSize=11)))
+    story.append(Paragraph(
+        f"Nombre Establecimiento: <b>{nombre_estab}</b>",
+        ParagraphStyle("f", fontName="Helvetica", fontSize=11)))
+    story.append(Paragraph(
+        f"Fecha de emisión: <b>{_fecha_larga_es()}</b>",
+        ParagraphStyle("f", fontName="Helvetica", fontSize=10,
+                       textColor=colors.HexColor("#555555"))))
+    story.append(Spacer(1, 0.4*cm))
 
-    # Datos principales en tabla
-    fecha_str = _fmt_fecha(i.fecha_inicio_tramite) if i.fecha_inicio_tramite else _fmt_fecha(datetime.now())
-    datos = [
-        ["Nº", str(nro_recibo), "Fecha de Inicio de Trámite:", fecha_str],
-        ["Código Inscripción:", str(i.codigo_inscripcion), "", ""],
+    encabezado = [
+        Paragraph("<b>Período</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
+                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Año</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
+                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Imp. Nominal</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
+                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Tiempo</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
+                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Tasa</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
+                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Int. Acum.</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
+                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Total</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
+                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
     ]
-    t = Table(datos, colWidths=[3.5*cm, 3.5*cm, 5.5*cm, 5.5*cm])
+    col_w = [2*cm, 1.8*cm, 3*cm, 1.8*cm, 1.8*cm, 2.6*cm, 3.4*cm]
+
+    tabla_data = [encabezado]
+    for f in filas:
+        tabla_data.append([
+            str(f["periodo"] or ""),
+            str(f["anio"] or ""),
+            _fmt_moneda(f["nominal"]),
+            str(f["tiempo"]),
+            str(f["tasa"]),
+            str(f["int_acum"]),
+            _fmt_moneda(f["actualizado"]),
+        ])
+
+    from reportlab.lib import colors as _colors
+    GRIS_FILA = _colors.HexColor("#f2f2f2")
+    t = Table(tabla_data, colWidths=col_w, repeatRows=1)
     t.setStyle(TableStyle([
-        ("FONTNAME",  (0,0), (-1,-1), "Helvetica"),
-        ("FONTNAME",  (0,0), (0,-1), "Helvetica-Bold"),
-        ("FONTNAME",  (2,0), (2,-1), "Helvetica-Bold"),
-        ("FONTSIZE",  (0,0), (-1,-1), 10),
-        ("VALIGN",    (0,0), (-1,-1), "MIDDLE"),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+        ("BACKGROUND",    (0,0), (-1,0), AZUL),
+        ("TEXTCOLOR",     (0,0), (-1,0), _colors.white),
+        ("FONTNAME",      (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTSIZE",      (0,0), (-1,-1), 9),
+        ("ALIGN",         (0,0), (-1,0), "CENTER"),
+        ("ALIGN",         (0,1), (-1,-1), "CENTER"),
+        ("ROWBACKGROUNDS",(0,1), (-1,-1), [_colors.white, GRIS_FILA]),
+        ("GRID",          (0,0), (-1,-1), 0.3, _colors.HexColor("#cccccc")),
+        ("TOPPADDING",    (0,0), (-1,-1), 4),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 4),
     ]))
     story.append(t)
+    story.append(Spacer(1, 0.4*cm))
 
-    story.append(HRFlowable(width="100%", thickness=0.5, color=GRIS, spaceAfter=8))
+    # Medio de pago (del primer registro)
+    medio = filas[0]["medio"] if filas else "EFECTIVO"
+    story.append(Paragraph(
+        f"Medio de pago: <b>{medio}</b>",
+        ParagraphStyle("mp", fontName="Helvetica", fontSize=10)))
+    story.append(Spacer(1, 0.2*cm))
 
-    # Apellido y Nombre
-    nombre = f"{(i.apellido_razonsocial or '').upper()} {(i.nombres or '').upper()}".strip()
-    story.append(_campo("Apellido y Nombre", nombre))
-
-    # Domicilio
-    dom_data = [[
-        Paragraph(f"Domicilio: <b>{(i.domicilio or '').upper()}</b>",
-                  ParagraphStyle("f", fontName="Helvetica", fontSize=10)),
-        Paragraph(f"C.Postal: <b>{i.codigo_postal or ''}</b>",
-                  ParagraphStyle("f", fontName="Helvetica", fontSize=10)),
-    ]]
-    story.append(Table(dom_data, colWidths=[13*cm, 5*cm]))
-
-    loc_data = [[
-        Paragraph(f"Localidad: <b>{(i.localidad or '').upper()}</b>",
-                  ParagraphStyle("f", fontName="Helvetica", fontSize=10)),
-        Paragraph(f"Provincia: <b>{(i.provincia or '').upper()}</b>",
-                  ParagraphStyle("f", fontName="Helvetica", fontSize=10)),
-    ]]
-    story.append(Table(loc_data, colWidths=[9*cm, 9*cm]))
-
-    story.append(Spacer(1, 0.5*cm))
-
-    # Monto sellado destacado
-    monto_data = [[
-        Paragraph("Monto Sellado:",
-                  ParagraphStyle("ml", fontName="Helvetica-Bold", fontSize=12,
+    # Total
+    total_data = [[
+        Paragraph("TOTAL ABONADO:",
+                  ParagraphStyle("tp", fontName="Helvetica-Bold", fontSize=12,
                                  alignment=TA_RIGHT)),
-        Paragraph(f"<b>{_fmt_moneda(i.monto_sellado)}</b>",
-                  ParagraphStyle("mv", fontName="Helvetica-Bold", fontSize=14,
-                                 textColor=AZUL, alignment=TA_LEFT)),
+        Paragraph(f"<b>{_fmt_moneda(total_a_pagar)}</b>",
+                  ParagraphStyle("tv", fontName="Helvetica-Bold", fontSize=13,
+                                 textColor=AZUL, alignment=TA_RIGHT)),
     ]]
-    t2 = Table(monto_data, colWidths=[9*cm, 9*cm])
-    t2.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"MIDDLE"),
-                            ("TOPPADDING",(0,0),(-1,-1),8),
-                            ("BOTTOMPADDING",(0,0),(-1,-1),8)]))
-    story.append(t2)
-
-    story.append(Spacer(1, 1*cm))
-
-    # Nota de validez
+    story.append(Table(total_data, colWidths=[14*cm, 4*cm]))
+    story.append(Spacer(1, 0.4*cm))
     story.append(Paragraph(
-        "* El presente recibo, no tiene validez sin el sello de pagado.",
-        ParagraphStyle("nota", fontName="Helvetica-Oblique", fontSize=9,
-                       textColor=GRIS, alignment=TA_RIGHT)
-    ))
-    story.append(Paragraph(
-        "* El documento es válido por 90 días desde la fecha de emisión.",
-        ParagraphStyle("nota", fontName="Helvetica-Oblique", fontSize=9,
-                       textColor=GRIS, alignment=TA_RIGHT)
-    ))
-
-    story.append(Spacer(1, 1.5*cm))
-
-    # Sello de pagado
-    sello_data = [[
-        Paragraph("SELLO DE PAGADO",
-                  ParagraphStyle("s", fontName="Helvetica-Bold", fontSize=10,
-                                 alignment=TA_CENTER, textColor=GRIS))
-    ]]
-    t3 = Table(sello_data, colWidths=[8*cm], rowHeights=[3*cm])
-    t3.setStyle(TableStyle([
-        ("BOX",         (0,0),(-1,-1), 1, GRIS),
-        ("ALIGN",       (0,0),(-1,-1), "CENTER"),
-        ("VALIGN",      (0,0),(-1,-1), "BOTTOM"),
-        ("BOTTOMPADDING",(0,0),(-1,-1), 6),
-    ]))
-    story.append(t3)
+        f"Fighiera, {_fecha_larga_es()}",
+        ParagraphStyle("fecha", fontName="Helvetica", fontSize=10, alignment=TA_RIGHT)))
 
     doc.build(story, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
     return output_path

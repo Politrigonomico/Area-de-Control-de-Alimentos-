@@ -192,7 +192,7 @@ class AuditoriaDialog(tk.Toplevel):
         self.auditoria_id = auditoria_id
         self.title("Nueva auditoría" if not auditoria_id else f"Editar auditoría #{auditoria_id}")
         self.resizable(False, False)
-        center_window(self, 640, 560)
+        center_window(self, 660, 620)
         self.grab_set()
         self._build()
         if auditoria_id:
@@ -235,10 +235,18 @@ class AuditoriaDialog(tk.Toplevel):
             (7, "Material Adjunto",   "e_material"),
         ]:
             ttk.Label(f, text=lbl).grid(row=row, column=0, sticky="nw", pady=5, padx=(0, 8))
-            if lbl in ("No Conformidades", "Conclusiones"):
-                widget = tk.Text(f, height=3, width=55, font=FONT_NORMAL,
-                                 relief="solid", borderwidth=1)
-                widget.grid(row=row, column=1, columnspan=3, sticky="ew", pady=5)
+            if lbl in ("Conformidades", "No Conformidades", "Conclusiones"):
+                # Multilínea con scrollbar vertical
+                frame_txt = ttk.Frame(f)
+                frame_txt.grid(row=row, column=1, columnspan=3, sticky="ew", pady=5)
+                frame_txt.columnconfigure(0, weight=1)
+                vsb = ttk.Scrollbar(frame_txt, orient="vertical")
+                widget = tk.Text(frame_txt, height=3, width=55, font=FONT_NORMAL,
+                                 relief="solid", borderwidth=1,
+                                 yscrollcommand=vsb.set, wrap="word")
+                vsb.config(command=widget.yview)
+                widget.grid(row=0, column=0, sticky="ew")
+                vsb.grid(row=0, column=1, sticky="ns")
             else:
                 widget = ttk.Entry(f, width=55)
                 widget.grid(row=row, column=1, columnspan=3, sticky="ew", pady=5)
