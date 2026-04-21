@@ -100,8 +100,10 @@ class EstablecimientosFrame(ttk.Frame):
         session.close()
 
         self.tree.delete(*self.tree.get_children())
-        for d in datos:
-            self.tree.insert("", "end", iid=d[0], tags=(d[8],), values=d[:8])
+        for i, d in enumerate(datos):
+            # Si el comercio no tiene código en el sistema viejo, le inventamos un ID temporal
+            codigo_id = d[0] if d[0] and str(d[0]).strip() != "" else f"SIN_CODIGO_{i}"
+            self.tree.insert("", "end", iid=codigo_id, tags=(d[8],), values=d[:8])
 
     def _selected_codigo(self):
         sel = self.tree.selection()

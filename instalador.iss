@@ -23,6 +23,7 @@ Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; Gr
 ; Copia el ejecutable, la carpeta _internal, la carpeta data_export, imágenes y todo lo necesario
 Source: "dist\SistemaAlimentos\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+
 ; Copia todos los archivos y subcarpetas de dependencias
 Source: "dist\SistemaAlimentos\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
 

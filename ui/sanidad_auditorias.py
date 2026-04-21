@@ -177,10 +177,52 @@ class AuditoriaDialog(tk.Toplevel):
             for e in estabs}
         session.close()
 
+        lista_original = list(self._estab_map.keys())
+
         ttk.Label(f, text="Establecimiento").grid(row=0, column=0, sticky="w", pady=5, padx=(0, 8))
-        self.e_estab = ttk.Combobox(f, values=[""] + list(self._estab_map.keys()),
-                                    width=38, state="readonly")
+        
+        self.e_estab = ttk.Entry(f, width=38)
         self.e_estab.grid(row=0, column=1, columnspan=3, sticky="ew", pady=5)
+
+        self.lista_sugerencias = tk.Listbox(f, height=6)
+
+        def actualizar_sugerencias(event):
+            if event.keysym in ('Up', 'Down', 'Return', 'Left', 'Right', 'Tab'):
+                return
+            
+            texto = self.e_estab.get().lower()
+            self.lista_sugerencias.delete(0, tk.END)
+            
+            if texto == '':
+                self.lista_sugerencias.place_forget()
+                return
+
+            coincidencias = [item for item in lista_original if texto in item.lower()]
+            
+            if coincidencias:
+                for item in coincidencias:
+                    self.lista_sugerencias.insert(tk.END, item)
+                
+                self.update_idletasks()
+                self.lista_sugerencias.place(in_=self.e_estab, x=0, rely=1, relwidth=1.0)
+                self.lista_sugerencias.lift()
+            else:
+                self.lista_sugerencias.place_forget()
+
+        def seleccionar_item(event):
+            if not self.lista_sugerencias.curselection():
+                return
+            seleccion = self.lista_sugerencias.get(self.lista_sugerencias.curselection())
+            self.e_estab.delete(0, tk.END)
+            self.e_estab.insert(0, seleccion)
+            self.lista_sugerencias.place_forget()
+            self.e_estab.focus_set()
+
+        self.e_estab.bind('<KeyRelease>', actualizar_sugerencias)
+        self.lista_sugerencias.bind('<ButtonRelease-1>', seleccionar_item)
+        
+        self.bind('<Button-1>', lambda e: self.lista_sugerencias.place_forget() 
+                  if e.widget != self.lista_sugerencias and e.widget != self.e_estab else None)
 
         ttk.Label(f, text="Nº Auditoría").grid(row=1, column=0, sticky="w", pady=5, padx=(0, 8))
         self.e_num = ttk.Entry(f, width=10)

@@ -181,7 +181,6 @@ class DeudasFrame(ttk.Frame):
         from database.db import get_session
         from database.models import Deuda
         from utils.ui_helpers import error_dialog
-        from datetime import datetime as _dt
 
         if solo_impagas:
             sufijo = "impagas"
@@ -193,7 +192,7 @@ class DeudasFrame(ttk.Frame):
             sufijo = "completo"
             filtro = False
 
-        ts   = _dt.now().strftime("%Y%m%d_%H%M%S")
+        ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
         path = _auto_path(f"deuda_{codigo}_{sufijo}_{ts}.pdf")
 
         try:
@@ -225,8 +224,7 @@ class DeudasFrame(ttk.Frame):
         codigo = d.codigo_establecimiento if d else "EST"
         session.close()
         try:
-            from datetime import datetime as _dt
-            ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             path = _auto_path(f"recibo_transaccion_{codigo}_{ts}.pdf")
             session = get_session()
             doc_recibo_transaccion(session, path, ids)
@@ -383,22 +381,65 @@ class PagoDialog(tk.Toplevel):
         ttk.Button(bar, text="Cancelar", command=self.destroy).pack(side="right")
 
     def _load(self):
+        from database.db import get_session
+        from database.models import Deuda, Emision
+        from utils.ui_helpers import set_entry, format_date
+        from datetime import datetime
+        
         session = get_session()
         d = session.query(Deuda).get(self.deuda_id)
         if not d:
             session.close()
             return
+
         nombre = ""
         if d.establecimiento:
             nombre = (d.establecimiento.nombre_establecimiento or "").title()
+
         self.lbl_estab.config(text=f"{d.codigo_establecimiento} — {nombre}")
         self.lbl_periodo.config(text=f"Período {d.periodo}/{d.anio}")
-        self.lbl_importe.config(text=f"$ {d.importe:,.2f}")
+
+        # --- CÁLCULO DEL IMPORTE ACTUALIZADO CON MORA (INTERÉS SIMPLE) ---
+        importe_original = d.importe or 0.0
+        importe_actualizado = importe_original
+
+        em = None
+        if d.anio and d.periodo:
+            emision_key = f"{int(d.periodo)}-{d.anio}"
+            em = session.query(Emision).get(emision_key)
+
+        if em and em.vencimiento:
+            hoy = datetime.today().date()
+            venc_date = em.vencimiento.date() if isinstance(em.vencimiento, datetime) else em.vencimiento
+            
+            if hoy > venc_date:
+                meses_mora = (hoy.year - venc_date.year) * 12 + (hoy.month - venc_date.month)
+                if hoy.day < venc_date.day:
+                    meses_mora -= 1
+                    
+                if meses_mora > 0:
+                    # CORRECCIÓN: Interés SIMPLE (8% mensual fijo sobre el original)
+                    interes_generado = importe_original * 0.08 * meses_mora
+                    importe_actualizado = importe_original + interes_generado
+                    
+                    self.lbl_importe.config(text=f"$ {importe_actualizado:,.2f} (Orig: $ {importe_original:,.2f} + Mora)")
+                else:
+                    self.lbl_importe.config(text=f"$ {importe_actualizado:,.2f}")
+            else:
+                self.lbl_importe.config(text=f"$ {importe_actualizado:,.2f}")
+        else:
+             self.lbl_importe.config(text=f"$ {importe_actualizado:,.2f} (Sin vto.)")
+
         self.pago_var.set(bool(d.pago))
-        set_entry(self.e_monto, str(d.monto_abonado or ""))
-        set_entry(self.e_fecha, format_date(d.fecha_pago))
-        # ── CORRECCIÓN: cargar medio_pago al abrir el diálogo ──
+
+        if not d.pago and not d.monto_abonado:
+            set_entry(self.e_monto, f"{importe_actualizado:.2f}")
+        else:
+            set_entry(self.e_monto, str(d.monto_abonado or ""))
+
+        set_entry(self.e_fecha, format_date(d.fecha_pago) if d.fecha_pago else format_date(datetime.now()))
         self.e_medio.set(d.medio_pago or "EFECTIVO")
+
         session.close()
 
     def _guardar(self):
@@ -429,7 +470,6 @@ class PagoDialog(tk.Toplevel):
         from database.db import get_session
         from database.models import Deuda
         from utils.ui_helpers import error_dialog
-        from datetime import datetime as _dt
         session = get_session()
         d = session.query(Deuda).get(deuda_id)
         if not d:
@@ -438,7 +478,7 @@ class PagoDialog(tk.Toplevel):
         codigo = d.codigo_establecimiento
         session.close()
         try:
-            ts   = _dt.now().strftime("%Y%m%d_%H%M%S")
+            ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
             path = _auto_path(f"recibo_transaccion_{codigo}_{ts}.pdf")
             session = get_session()
             doc_recibo_transaccion(session, path, [deuda_id])
