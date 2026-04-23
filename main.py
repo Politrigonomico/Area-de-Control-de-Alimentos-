@@ -258,7 +258,8 @@ class App(tk.Tk):
         self.title("Sistema Área de Alimentos — Fighiera")
         self.configure(bg=COLORS["bg_sidebar"])
         center_window(self, 1280, 820)
-        self.minsize(1000, 680)
+        self.state("zoomed")
+        self.minsize(800, 680)
 
         configure_treeview_style()
         init_db()
