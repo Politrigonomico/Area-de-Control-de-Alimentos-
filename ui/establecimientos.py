@@ -29,30 +29,32 @@ class EstablecimientosFrame(ttk.Frame):
         self.refresh()
 
     def _build(self):
+        # Toolbar superior
         bar = ttk.Frame(self, padding=(0, 0, 0, 8))
         bar.pack(fill="x")
 
         ttk.Label(bar, text="Establecimientos",
                   font=FONT_TITLE).pack(side="left")
 
+        # Búsqueda
         ttk.Label(bar, text="Buscar:", font=FONT_NORMAL).pack(side="left", padx=(20, 4))
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *_: self.refresh())
         ttk.Entry(bar, textvariable=self.search_var, width=26).pack(side="left")
 
+        # Filtro estado
         self.mostrar_bajas_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(bar, text="Incluir bajas",
                         variable=self.mostrar_bajas_var,
                         command=self.refresh).pack(side="left", padx=8)
 
-        # Todos a la derecha para evitar superposición
-        ttk.Button(bar, text="＋  Nuevo",        command=self._nuevo).pack(side="right", padx=4)
-        ttk.Button(bar, text="✎  Editar",        command=self._editar).pack(side="right", padx=4)
-        ttk.Button(bar, text="✕  Dar de baja",   style="Danger.TButton",
+        # Botones acción
+        ttk.Button(bar, text="＋  Nuevo", command=self._nuevo).pack(side="right", padx=4)
+        ttk.Button(bar, text="✎  Editar", command=self._editar).pack(side="right", padx=4)
+        ttk.Button(bar, text="✕  Dar de baja", style="Danger.TButton",
                    command=self._dar_baja).pack(side="right", padx=4)
-        ttk.Button(bar, text="🖨  Imprimir",      style="Success.TButton",
-                   command=self._menu_impresion).pack(side="right", padx=4)
 
+        # Treeview
         self.tree, _ = scrolled_treeview(self, self.COLS, self.HEADINGS, self.WIDTHS, height=22)
         self.tree.bind("<Double-1>", lambda e: self._editar())
 
@@ -74,6 +76,7 @@ class EstablecimientosFrame(ttk.Frame):
         q = q.order_by(Establecimiento.codigo_establecimiento)
         rows = q.all()
 
+        # Serializar relaciones ANTES de cerrar la sesión (evita DetachedInstanceError)
         datos = []
         for e in rows:
             titular = ""
@@ -95,8 +98,10 @@ class EstablecimientosFrame(ttk.Frame):
         session.close()
 
         self.tree.delete(*self.tree.get_children())
-        for d in datos:
-            self.tree.insert("", "end", iid=d[0], tags=(d[8],), values=d[:8])
+        for i, d in enumerate(datos):
+            # Si el comercio no tiene código en el sistema viejo, le inventamos un ID temporal
+            codigo_id = d[0] if d[0] and str(d[0]).strip() != "" else f"SIN_CODIGO_{i}"
+            self.tree.insert("", "end", iid=codigo_id, tags=(d[8],), values=d[:8])
 
     def _selected_codigo(self):
         sel = self.tree.selection()
@@ -133,98 +138,6 @@ class EstablecimientosFrame(ttk.Frame):
         session.close()
         self.refresh()
 
-    def _menu_impresion(self):
-        codigo = self._selected_codigo()
-        if not codigo:
-            return
-        menu = tk.Menu(self, tearoff=0)
-        menu.add_command(label="Certificado de Inscripción",
-                         command=lambda: self._imprimir_certificado(codigo))
-        menu.add_command(label="Recibo de Pago de Inicio de Trámite",
-                         command=lambda: self._imprimir_recibo_inicio(codigo))
-        menu.add_command(label="Recibo Tasa de Inscripción",
-                         command=lambda: self._imprimir_tasa(codigo))
-        menu.add_command(label="Detalle de Deuda con Intereses",
-                         command=lambda: self._imprimir_deuda(codigo))
-        try:
-            menu.tk_popup(self.winfo_pointerx(), self.winfo_pointery())
-        finally:
-            menu.grab_release()
-
-    def _abrir_pdf(self, path):
-        from reports.documentos_institucionales import abrir_pdf
-        abrir_pdf(path)
-
-    def _imprimir_certificado(self, codigo):
-        from reports.documentos_institucionales import doc_certificado_inscripcion, _auto_path, abrir_pdf
-        from utils.ui_helpers import error_dialog
-        try:
-            path = _auto_path(f"certificado_inscripcion_{codigo}.pdf")
-            session = get_session()
-            doc_certificado_inscripcion(session, path, codigo)
-            session.close()
-            abrir_pdf(path)
-        except Exception as ex:
-            error_dialog(self, "Error al generar certificado", str(ex))
-
-    def _imprimir_recibo_inicio(self, codigo):
-        from reports.documentos_institucionales import doc_recibo_inicio_tramite, _auto_path, abrir_pdf
-        from database.models import Establecimiento
-        from utils.ui_helpers import error_dialog
-        session = get_session()
-        e = session.query(Establecimiento).get(codigo)
-        if not e or not e.codigo_inscripcion:
-            error_dialog(self, "Error", "El establecimiento no tiene inscripto asignado.")
-            session.close()
-            return
-        insc_id = e.codigo_inscripcion
-        session.close()
-        try:
-            path = _auto_path(f"recibo_inicio_{codigo}.pdf")
-            session = get_session()
-            doc_recibo_inicio_tramite(session, path, insc_id)
-            session.close()
-            abrir_pdf(path)
-        except Exception as ex:
-            error_dialog(self, "Error", str(ex))
-
-    def _imprimir_tasa(self, codigo):
-        from reports.documentos_institucionales import doc_recibo_tasa_inscripcion, _auto_path, abrir_pdf
-        from utils.ui_helpers import error_dialog
-        try:
-            path = _auto_path(f"tasa_inscripcion_{codigo}.pdf")
-            session = get_session()
-            doc_recibo_tasa_inscripcion(session, path, codigo)
-            session.close()
-            abrir_pdf(path)
-        except Exception as ex:
-            error_dialog(self, "Error", str(ex))
-
-    def _imprimir_deuda(self, codigo):
-        from reports.documentos_institucionales import doc_detalle_deuda, _auto_path, abrir_pdf
-        from utils.ui_helpers import error_dialog
-        try:
-            path = _auto_path(f"deuda_{codigo}.pdf")
-            session = get_session()
-            doc_detalle_deuda(session, path, codigo, solo_impagas=True)
-            session.close()
-            abrir_pdf(path)
-        except Exception as ex:
-            error_dialog(self, "Error", str(ex))
-
-
-def _generar_codigo_siguiente(session) -> str:
-    """Genera el siguiente código EST correlativo."""
-    ultimo = (session.query(Establecimiento)
-              .order_by(Establecimiento.codigo_establecimiento.desc())
-              .first())
-    if ultimo:
-        parte_num = ''.join(filter(str.isdigit, ultimo.codigo_establecimiento))
-        siguiente = int(parte_num) + 1 if parte_num else 1
-    else:
-        siguiente = 1
-    return f"EST{siguiente:03d}"
-
 
 class EstablecimientoDialog(tk.Toplevel):
     """Diálogo para crear o editar un establecimiento."""
@@ -245,18 +158,22 @@ class EstablecimientoDialog(tk.Toplevel):
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=12, pady=12)
 
+        # Tab 1: Datos generales
         f1 = ttk.Frame(nb, padding=16)
         nb.add(f1, text="  Datos generales  ")
         self._build_generales(f1)
 
+        # Tab 2: Montos / rubros
         f2 = ttk.Frame(nb, padding=16)
         nb.add(f2, text="  Rubros y montos  ")
         self._build_montos(f2)
 
+        # Tab 3: Observaciones
         f3 = ttk.Frame(nb, padding=16)
         nb.add(f3, text="  Observaciones  ")
         self._build_obs(f3)
 
+        # Botones
         bar = ttk.Frame(self, padding=(12, 4, 12, 12))
         bar.pack(fill="x")
         ttk.Button(bar, text="Guardar", command=self._guardar,
@@ -267,18 +184,11 @@ class EstablecimientoDialog(tk.Toplevel):
         f.columnconfigure(1, weight=1)
         f.columnconfigure(3, weight=1)
 
-        # Código — siempre disabled, se genera automáticamente
-        ttk.Label(f, text="Código").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 8))
-        self.e_codigo = ttk.Entry(f, width=12, state="disabled")
+        # Código
+        ttk.Label(f, text="Código *").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 8))
+        self.e_codigo = ttk.Entry(f, width=12)
         self.e_codigo.grid(row=0, column=1, sticky="w", pady=4)
-
-        if not self.codigo:
-            # Auto-generar código al abrir el diálogo
-            session = get_session()
-            nuevo_codigo = _generar_codigo_siguiente(session)
-            session.close()
-            self.e_codigo.configure(state="normal")
-            self.e_codigo.insert(0, nuevo_codigo)
+        if self.codigo:
             self.e_codigo.configure(state="disabled")
 
         ttk.Label(f, text="Estado tramite").grid(row=0, column=2, sticky="w", padx=(12, 8))
@@ -334,18 +244,15 @@ class EstablecimientoDialog(tk.Toplevel):
 
         session = get_session()
         rubros = session.query(Rubro).order_by(Rubro.nombre).all()
-        self._rubros_map   = {f"{r.nombre} ($ {r.valor:,.0f})": r.id_rubro for r in rubros}
-        self._rubros_valor = {r.id_rubro: r.valor for r in rubros}
+        self._rubros_map = {f"{r.nombre} ($ {r.valor:,.0f})": r.id_rubro for r in rubros}
         session.close()
         rubro_vals = [""] + list(self._rubros_map.keys())
 
-        self._labels_diferencia = {}
-
-        for i, (lbl, attr_cb, attr_monto, attr_lbl) in enumerate([
-            ("Rubro principal", "e_rubro",  "e_monto",  "lbl_dif_0"),
-            ("Anexo 1",         "e_anexo1", "e_monto1", "lbl_dif_1"),
-            ("Anexo 2",         "e_anexo2", "e_monto2", "lbl_dif_2"),
-            ("Anexo 3",         "e_anexo3", "e_monto3", "lbl_dif_3"),
+        for i, (lbl, attr_cb, attr_monto) in enumerate([
+            ("Rubro principal",  "e_rubro",  "e_monto"),
+            ("Anexo 1",          "e_anexo1", "e_monto1"),
+            ("Anexo 2",          "e_anexo2", "e_monto2"),
+            ("Anexo 3",          "e_anexo3", "e_monto3"),
         ]):
             ttk.Label(f, text=lbl).grid(row=i, column=0, sticky="w", pady=5, padx=(0, 8))
             cb = ttk.Combobox(f, values=rubro_vals, width=34, state="readonly")
@@ -353,26 +260,9 @@ class EstablecimientoDialog(tk.Toplevel):
             setattr(self, attr_cb, cb)
 
             ttk.Label(f, text="Monto $").grid(row=i, column=2, sticky="w", padx=(12, 8))
-            ent = ttk.Entry(f, width=14, state="disabled")
+            ent = ttk.Entry(f, width=14)
             ent.grid(row=i, column=3, sticky="w", pady=5)
             setattr(self, attr_monto, ent)
-
-            lbl_dif = ttk.Label(f, text="", font=("Segoe UI", 9), foreground="#b7791f")
-            lbl_dif.grid(row=i, column=4, sticky="w", padx=(6, 0))
-            self._labels_diferencia[attr_lbl] = (lbl_dif, ent)
-
-            def _on_rubro_select(event, entry=ent, combo=cb, lbl_key=attr_lbl):
-                key = combo.get()
-                rid = self._rubros_map.get(key)
-                if rid:
-                    valor_actual = self._rubros_valor.get(rid, 0)
-                    entry.configure(state="normal")
-                    entry.delete(0, "end")
-                    entry.insert(0, f"{valor_actual:.2f}")
-                    entry.configure(state="disabled")
-                    lbl_w, _ = self._labels_diferencia[lbl_key]
-                    lbl_w.configure(text="")
-            cb.bind("<<ComboboxSelected>>", _on_rubro_select)
 
     def _build_obs(self, f):
         ttk.Label(f, text="Solicitudes").pack(anchor="w")
@@ -391,12 +281,7 @@ class EstablecimientoDialog(tk.Toplevel):
             session.close()
             return
 
-        # Mostrar código del establecimiento en el campo
-        self.e_codigo.configure(state="normal")
-        self.e_codigo.delete(0, "end")
-        self.e_codigo.insert(0, e.codigo_establecimiento)
-        self.e_codigo.configure(state="disabled")
-
+        set_entry(self.e_codigo, e.codigo_establecimiento)
         set_entry(self.e_nombre, e.nombre_establecimiento or "")
         self.e_estado.set(e.estado_tramite or "")
         set_entry(self.e_domicilio, e.domicilio_establecimiento or "")
@@ -411,11 +296,13 @@ class EstablecimientoDialog(tk.Toplevel):
         if e.observaciones:
             self.e_obs.insert("1.0", e.observaciones)
 
+        # Titular
         if e.inscripto:
             key = e.inscripto.nombre_completo.title()
             if key in self._inscriptos_map:
                 self.e_titular.set(key)
 
+        # Rubros — busca la clave que contiene el nombre
         def set_rubro_cb(cb, rubro_id):
             for key, rid in self._rubros_map.items():
                 if rid == rubro_id:
@@ -426,50 +313,18 @@ class EstablecimientoDialog(tk.Toplevel):
         set_rubro_cb(self.e_anexo1, e.anexo1_id)
         set_rubro_cb(self.e_anexo2, e.anexo2_id)
         set_rubro_cb(self.e_anexo3, e.anexo3_id)
-
-        for entry, val in [
-            (self.e_monto,  e.monto or 0),
-            (self.e_monto1, e.monto1 or 0),
-            (self.e_monto2, e.monto2 or 0),
-            (self.e_monto3, e.monto3 or 0),
-        ]:
-            entry.configure(state="normal")
-            entry.delete(0, "end")
-            entry.insert(0, str(val))
-            entry.configure(state="disabled")
-
-        def _verificar_diferencia(attr_lbl, monto_guardado, rubro_cb):
-            key = rubro_cb.get()
-            rid = self._rubros_map.get(key)
-            if not rid:
-                return
-            valor_rubro_actual = self._rubros_valor.get(rid, 0)
-            if abs(monto_guardado - valor_rubro_actual) > 0.01:
-                lbl_w, _ = self._labels_diferencia[attr_lbl]
-                lbl_w.configure(
-                    text=f"⚠ Rubro actual: $ {valor_rubro_actual:,.2f}\n"
-                         f"(guardado: $ {monto_guardado:,.2f})"
-                )
-
-        _verificar_diferencia("lbl_dif_0", e.monto or 0,  self.e_rubro)
-        _verificar_diferencia("lbl_dif_1", e.monto1 or 0, self.e_anexo1)
-        _verificar_diferencia("lbl_dif_2", e.monto2 or 0, self.e_anexo2)
-        _verificar_diferencia("lbl_dif_3", e.monto3 or 0, self.e_anexo3)
+        set_entry(self.e_monto,  str(e.monto or 0))
+        set_entry(self.e_monto1, str(e.monto1 or 0))
+        set_entry(self.e_monto2, str(e.monto2 or 0))
+        set_entry(self.e_monto3, str(e.monto3 or 0))
 
         session.close()
 
     def _guardar(self):
-        # Leer código del campo disabled correctamente
-        self.e_codigo.configure(state="normal")
         codigo = get_entry(self.e_codigo).upper()
-        self.e_codigo.configure(state="disabled")
-
         nombre = get_entry(self.e_nombre)
-        if not codigo:
-            error_dialog(self, "Error", "No se pudo generar el código. Cerrá y reintentá.")
-            return
-        if not nombre:
-            error_dialog(self, "Error", "El Nombre es obligatorio.")
+        if not codigo or not nombre:
+            error_dialog(self, "Error", "Código y Nombre son obligatorios.")
             return
 
         session = get_session()
@@ -508,21 +363,13 @@ class EstablecimientoDialog(tk.Toplevel):
             return self._rubros_map.get(cb.get())
 
         e.rubro_id  = rubro_id_from_cb(self.e_rubro)
-
-        # Leer montos disabled
-        def leer_monto(entry):
-            entry.configure(state="normal")
-            v = parse_float_str(get_entry(entry))
-            entry.configure(state="disabled")
-            return v
-
-        e.monto     = leer_monto(self.e_monto)
+        e.monto     = parse_float_str(get_entry(self.e_monto))
         e.anexo1_id = rubro_id_from_cb(self.e_anexo1)
-        e.monto1    = leer_monto(self.e_monto1)
+        e.monto1    = parse_float_str(get_entry(self.e_monto1))
         e.anexo2_id = rubro_id_from_cb(self.e_anexo2)
-        e.monto2    = leer_monto(self.e_monto2)
+        e.monto2    = parse_float_str(get_entry(self.e_monto2))
         e.anexo3_id = rubro_id_from_cb(self.e_anexo3)
-        e.monto3    = leer_monto(self.e_monto3)
+        e.monto3    = parse_float_str(get_entry(self.e_monto3))
 
         try:
             session.commit()

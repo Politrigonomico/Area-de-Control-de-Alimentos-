@@ -28,41 +28,41 @@ class DeudasFrame(ttk.Frame):
         self.refresh()
 
     def _build(self):
-        # Toolbar
-        bar = ttk.Frame(self, padding=(0, 0, 0, 8))
-        bar.pack(fill="x")
-        ttk.Label(bar, text="Deudas y Pagos", font=FONT_TITLE).pack(side="left")
+        # Fila 1: título + filtros
+        bar1 = ttk.Frame(self, padding=(0, 0, 0, 4))
+        bar1.pack(fill="x")
+        ttk.Label(bar1, text="Deudas y Pagos", font=FONT_TITLE).pack(side="left")
 
-        # Filtros
-        ttk.Label(bar, text="Año:").pack(side="left", padx=(20, 4))
+        ttk.Label(bar1, text="Año:").pack(side="left", padx=(20, 4))
         self.anio_var = tk.StringVar(value="Todos")
         anios = ["Todos"] + [str(y) for y in range(2014, datetime.now().year + 1)]
-        ttk.Combobox(bar, textvariable=self.anio_var, values=anios,
+        ttk.Combobox(bar1, textvariable=self.anio_var, values=anios,
                      width=7, state="readonly").pack(side="left")
         self.anio_var.trace_add("write", lambda *_: self.refresh())
 
-        ttk.Label(bar, text="Estado:").pack(side="left", padx=(12, 4))
+        ttk.Label(bar1, text="Estado:").pack(side="left", padx=(12, 4))
         self.estado_var = tk.StringVar(value="Todos")
-        ttk.Combobox(bar, textvariable=self.estado_var,
+        ttk.Combobox(bar1, textvariable=self.estado_var,
                      values=["Todos", "Impago", "Pagado"],
                      width=8, state="readonly").pack(side="left")
         self.estado_var.trace_add("write", lambda *_: self.refresh())
 
-        ttk.Label(bar, text="Buscar estab.:").pack(side="left", padx=(12, 4))
+        ttk.Label(bar1, text="Buscar estab.:").pack(side="left", padx=(12, 4))
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *_: self.refresh())
-        ttk.Entry(bar, textvariable=self.search_var, width=20).pack(side="left")
+        ttk.Entry(bar1, textvariable=self.search_var, width=20).pack(side="left")
 
-        # Acciones
-        ttk.Button(bar, text="🖨  Imprimir recibo",
-                   command=self._imprimir_recibo).pack(side="right", padx=4)
-        ttk.Button(bar, text="💰  Registrar pago", style="Success.TButton",
-                   command=self._registrar_pago).pack(side="right", padx=4)
-        ttk.Button(bar, text="↩  Cancelar pago", style="Danger.TButton",
-                   command=self._cancelar_pago).pack(side="right", padx=4)
-        ttk.Button(bar, text="＋  Nueva deuda",
-                   command=self._nueva_deuda).pack(side="right", padx=4)
-
+        # Fila 2: botones de acción
+        bar2 = ttk.Frame(self, padding=(0, 0, 0, 8))
+        bar2.pack(fill="x")
+        ttk.Button(bar2, text="＋  Nueva deuda",
+                   command=self._nueva_deuda).pack(side="left", padx=(0, 4))
+        ttk.Button(bar2, text="↩  Cancelar pago", style="Danger.TButton",
+                   command=self._cancelar_pago).pack(side="left", padx=4)
+        ttk.Button(bar2, text="💰  Registrar pago", style="Success.TButton",
+                   command=self._registrar_pago).pack(side="left", padx=4)
+        ttk.Button(bar2, text="🖨  Imprimir recibo",
+                   command=self._imprimir_recibo).pack(side="left", padx=4)
         # Resumen
         self.lbl_resumen = ttk.Label(self,
             text="", font=("Segoe UI", 11, "bold"), foreground=COLORS["accent"])

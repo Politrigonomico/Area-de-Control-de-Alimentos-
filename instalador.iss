@@ -30,7 +30,7 @@ Source: "dist\SistemaAlimentos\_internal\*"; DestDir: "{app}\_internal"; Flags: 
 [Icons]
 ; Acceso directo en el menú de inicio
 Name: "{autoprograms}\Sistema Área de Alimentos"; Filename: "{app}\SistemaAlimentos.exe"
-; Acceso directo en el escritorio
+; Acceso directo en el escritorio<
 Name: "{autodesktop}\Sistema Área de Alimentos"; Filename: "{app}\SistemaAlimentos.exe"; Tasks: desktopicon
 
 [Run]
