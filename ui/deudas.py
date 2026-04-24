@@ -72,6 +72,34 @@ class DeudasFrame(ttk.Frame):
         self.tree, _ = scrolled_treeview(self, self.COLS, self.HEADINGS, self.WIDTHS, height=20)
         self.tree.configure(selectmode="extended")
         self.tree.bind("<Double-1>", lambda e: self._registrar_pago())
+        self.tree.bind("<Button-3>", self._menu_contextual)
+
+
+    def _menu_contextual(self, event):
+        iid = self.tree.identify_row(event.y)
+        if not iid:
+            return
+        self.tree.selection_set(iid)
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="🗑  Eliminar del sistema",
+                         command=lambda: self._eliminar(iid))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _eliminar(self, iid):
+        if not confirm_dialog(self, "Eliminar",
+                "¿Estás seguro de eliminar esta deuda del sistema?\n\n"
+                "Esta acción no se puede deshacer."):
+            return
+        session = get_session()
+        d = session.query(Deuda).get(int(iid))
+        if d:
+            session.delete(d)
+            session.commit()
+        session.close()
+        self.refresh()
 
     def refresh(self):
         session = get_session()
@@ -528,8 +556,25 @@ class DeudaDialog(tk.Toplevel):
         session.close()
 
         ttk.Label(f, text="Establecimiento *").grid(row=0, column=0, sticky="w", pady=5, padx=(0, 8))
-        self.e_estab = ttk.Combobox(f, values=list(self._estab_map.keys()), width=34, state="readonly")
+        self.e_estab = ttk.Combobox(f, values=list(self._estab_map.keys()), width=34)
         self.e_estab.grid(row=0, column=1, sticky="ew", pady=5)
+
+        self._todos_estab = list(self._estab_map.keys())
+
+        def _filtrar(event):
+            if event.keysym in ("Down", "Up", "Return", "Escape", "Tab"):
+                return
+            texto = self.e_estab.get().lower()
+            if not texto:
+                self.e_estab["values"] = self._todos_estab
+            else:
+                self.e_estab["values"] = [k for k in self._todos_estab if texto in k.lower()]
+            try:
+                self.e_estab.tk.call(self.e_estab._w, "post")
+            except Exception:
+                pass
+
+        self.e_estab.bind("<KeyRelease>", _filtrar)
 
         ttk.Label(f, text="Año *").grid(row=1, column=0, sticky="w", pady=5, padx=(0, 8))
         self.e_anio = ttk.Entry(f, width=8)

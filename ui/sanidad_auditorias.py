@@ -334,6 +334,35 @@ class SanidadFrame(ttk.Frame):
 
         self.tree, _ = scrolled_treeview(self, self.COLS, self.HEADINGS, self.WIDTHS, height=22)
         self.tree.bind("<Double-1>", lambda e: self._editar())
+        self.tree.bind("<Button-3>", self._menu_contextual)
+
+
+    def _menu_contextual(self, event):
+        iid = self.tree.identify_row(event.y)
+        if not iid:
+            return
+        self.tree.selection_set(iid)
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="🗑  Eliminar del sistema",
+                         command=lambda: self._eliminar(iid))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _eliminar(self, codigo):
+        if not confirm_dialog(self, "Eliminar",
+                f"¿Estás seguro de eliminar la auditoría #{codigo} del sistema?\n\n"
+                "Esta acción no se puede deshacer."):
+            return
+        session = get_session()
+        from database.models import Auditoria
+        a = session.query(Auditoria).get(int(codigo))
+        if a:
+            session.delete(a)
+            session.commit()
+        session.close()
+        self.refresh()
 
     def refresh(self):
         session = get_session()
