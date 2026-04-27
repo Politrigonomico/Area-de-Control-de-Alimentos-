@@ -174,28 +174,59 @@ class DeudasFrame(ttk.Frame):
         )
 
     def _imprimir_recibo(self):
-        from reports.documentos_institucionales import doc_detalle_deuda, _auto_path, abrir_pdf
+        ids = self._selected_ids()
+        if not ids:
+            return
+        
+        # Crear un menú desplegable en la posición del mouse
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="📋 Imprimir resumen de cuenta (Solo impagas)",
+                         command=lambda: self._ejecutar_impresion("impagas", ids))
+        menu.add_command(label="📚 Imprimir historial completo (Pagadas e impagas)",
+                         command=lambda: self._ejecutar_impresion("completo", ids))
+        menu.add_separator()
+        menu.add_command(label="📄 Imprimir comprobante de la(s) selecciónada(s)",
+                         command=lambda: self._ejecutar_impresion("seleccion", ids))
+        
+        try:
+            # Mostrar el menú justo donde está el cursor
+            menu.tk_popup(self.winfo_pointerx(), self.winfo_pointery())
+        finally:
+            menu.grab_release()
+
+    def _ejecutar_impresion(self, tipo, ids):
+        from reports.documentos_institucionales import doc_detalle_deuda, doc_recibo_transaccion, _auto_path, abrir_pdf
         from database.db import get_session
         from database.models import Deuda
         from utils.ui_helpers import error_dialog
-        did = self._selected_deuda_id()
-        if did is None:
-            return
+        
         session = get_session()
-        d = session.query(Deuda).get(did)
+        d = session.query(Deuda).get(ids[0])
         if not d:
             session.close()
             return
         codigo = d.codigo_establecimiento
         session.close()
+        
         try:
-            path = _auto_path(f"deuda_{codigo}.pdf")
+            from datetime import datetime as _dt
+            ts = _dt.now().strftime("%Y%m%d_%H%M%S")
             session = get_session()
-            doc_detalle_deuda(session, path, codigo, solo_impagas=True)
+            
+            if tipo == "impagas":
+                path = _auto_path(f"deuda_{codigo}_impagas_{ts}.pdf")
+                doc_detalle_deuda(session, path, codigo, solo_impagas=True)
+            elif tipo == "completo":
+                path = _auto_path(f"deuda_{codigo}_completo_{ts}.pdf")
+                doc_detalle_deuda(session, path, codigo, solo_impagas=False)
+            elif tipo == "seleccion":
+                path = _auto_path(f"recibo_transaccion_{codigo}_{ts}.pdf")
+                doc_recibo_transaccion(session, path, ids)
+                
             session.close()
             abrir_pdf(path)
         except Exception as ex:
-            error_dialog(self, "Error", str(ex))
+            error_dialog(self, "Error al generar el documento", str(ex))
 
     def _selected_deuda_id(self):
         sel = self.tree.selection()
@@ -262,22 +293,28 @@ class DeudasFrame(ttk.Frame):
 
 
 class PagoDialog(tk.Toplevel):
-    """Registra o modifica el pago de una deuda."""
+    """Registra o modifica el pago de una deuda, permitiendo aplicar descuentos por moratorias."""
     def __init__(self, parent, deuda_id: int):
         super().__init__(parent)
         self.deuda_id = deuda_id
         self.title("Registrar pago")
         self.resizable(False, False)
-        center_window(self, 420, 360)
+        center_window(self, 460, 420)
         self.grab_set()
+        
+        # Variables para recalcular descuentos
+        self._nominal = 0.0
+        self._intereses_generados = 0.0
+        
         self._build()
         self._load()
 
     def _imprimir_recibo_desde_dialogo(self, deuda_id: int):
-        from reports.documentos_institucionales import doc_detalle_deuda, _auto_path, abrir_pdf
+        from reports.documentos_institucionales import doc_recibo_transaccion, _auto_path, abrir_pdf
         from database.db import get_session
         from database.models import Deuda
         from utils.ui_helpers import error_dialog
+        
         session = get_session()
         d = session.query(Deuda).get(deuda_id)
         if not d:
@@ -285,12 +322,17 @@ class PagoDialog(tk.Toplevel):
             return
         codigo = d.codigo_establecimiento
         session.close()
+        
         try:
-            path = _auto_path(f"recibo_pago_{codigo}.pdf")
+            from datetime import datetime as _dt
+            ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+            path = _auto_path(f"recibo_pago_{codigo}_{ts}.pdf")
+            
             session = get_session()
-            # Solo mostrar la deuda específica en el recibo de pago
-            doc_detalle_deuda(session, path, codigo, solo_impagas=False)
+            # Acá está la magia: usamos doc_recibo_transaccion y le pasamos solo el ID que pagaste
+            doc_recibo_transaccion(session, path, [deuda_id])
             session.close()
+            
             abrir_pdf(path)
         except Exception as ex:
             error_dialog(self, "Error al generar PDF", str(ex))
@@ -308,12 +350,19 @@ class PagoDialog(tk.Toplevel):
         self.lbl_periodo = ttk.Label(f, text="")
         self.lbl_periodo.grid(row=1, column=1, sticky="w")
 
-        ttk.Label(f, text="Importe original:").grid(row=2, column=0, sticky="w", pady=5)
+        ttk.Label(f, text="Capital Original:").grid(row=2, column=0, sticky="w", pady=5)
         self.lbl_importe = ttk.Label(f, text="")
         self.lbl_importe.grid(row=2, column=1, sticky="w")
 
-        ttk.Separator(f, orient="horizontal").grid(
-            row=3, column=0, columnspan=2, sticky="ew", pady=8)
+        # NUEVO: Campo para Moratorias
+        ttk.Separator(f, orient="horizontal").grid(row=3, column=0, columnspan=2, sticky="ew", pady=8)
+        
+        ttk.Label(f, text="Descuento en Intereses (%):").grid(row=4, column=0, sticky="w", pady=5)
+        self.e_descuento = ttk.Entry(f, width=8)
+        self.e_descuento.grid(row=4, column=1, sticky="w")
+        self.e_descuento.insert(0, "0")
+        self.e_descuento.bind("<KeyRelease>", self._recalcular_monto)
+        ttk.Label(f, text="(Resoluciones o Moratorias)", font=("Segoe UI", 8)).grid(row=4, column=1, sticky="e")
 
         ttk.Label(f, text="Monto abonado $").grid(row=5, column=0, sticky="w", pady=5)
         self.e_monto = ttk.Entry(f, width=16)
@@ -325,16 +374,31 @@ class PagoDialog(tk.Toplevel):
         ttk.Label(f, text="(dd/mm/aaaa)", font=("Segoe UI", 10)).grid(row=6, column=1, sticky="e")
 
         ttk.Label(f, text="Medio de pago").grid(row=7, column=0, sticky="w", pady=5)
-        self.e_medio = ttk.Combobox(f, values=["EFECTIVO", "TRANSFERENCIA"],
-                                    width=18, state="readonly")
+        self.e_medio = ttk.Combobox(f, values=["EFECTIVO", "TRANSFERENCIA"], width=18, state="readonly")
         self.e_medio.grid(row=7, column=1, sticky="w")
         self.e_medio.set("EFECTIVO")
 
         bar = ttk.Frame(f)
         bar.grid(row=8, column=0, columnspan=2, pady=(16, 8), sticky="e")
-        ttk.Button(bar, text="Guardar", style="Success.TButton",
-                   command=self._guardar).pack(side="right", padx=4)
+        ttk.Button(bar, text="Guardar", style="Success.TButton", command=self._guardar).pack(side="right", padx=4)
         ttk.Button(bar, text="Cancelar", command=self.destroy).pack(side="right")
+
+    def _recalcular_monto(self, event=None):
+        desc_str = self.e_descuento.get().strip()
+        try:
+            desc = float(desc_str) if desc_str else 0.0
+        except ValueError:
+            desc = 0.0
+        
+        # Validar límites
+        if desc < 0: desc = 0.0
+        if desc > 100: desc = 100.0
+
+        intereses_con_descuento = self._intereses_generados * (1 - (desc / 100.0))
+        nuevo_total = self._nominal + intereses_con_descuento
+
+        from utils.ui_helpers import set_entry
+        set_entry(self.e_monto, f"{nuevo_total:.2f}")
 
     def _load(self):
         session = get_session()
@@ -342,29 +406,46 @@ class PagoDialog(tk.Toplevel):
         if not d:
             session.close()
             return
-        nombre = ""
-        if d.establecimiento:
-            nombre = (d.establecimiento.nombre_establecimiento or "").title()
+        
+        nombre = (d.establecimiento.nombre_establecimiento or "").title() if d.establecimiento else ""
         self.lbl_estab.config(text=f"{d.codigo_establecimiento} — {nombre}")
         self.lbl_periodo.config(text=f"Período {d.periodo}/{d.anio}")
 
-        # Calcular monto con intereses si está impaga
+        self._nominal = d.importe or 0.0
+
         from reports.documentos_institucionales import _calcular_interes
         if d.vencimiento and not d.pago:
-            meses, int_acum, actualizado = _calcular_interes(d.importe, d.vencimiento)
-            self.lbl_importe.config(
-                text=f"$ {d.importe:,.2f}  +  {meses} meses × 3% = $ {actualizado:,.2f}")
+            meses, int_porcentaje, actualizado = _calcular_interes(d.importe, d.vencimiento)
+            
+            # SOLUCIÓN: Calculamos el dinero real del interés, no el porcentaje
+            monto_interes = actualizado - d.importe 
+            
+            self._intereses_generados = monto_interes
+            self.lbl_importe.config(text=f"$ {d.importe:,.2f}  (+ $ {monto_interes:,.2f} de int.)")
+            from utils.ui_helpers import set_entry
             set_entry(self.e_monto, f"{actualizado:.2f}")
         else:
+            self._intereses_generados = 0.0
             self.lbl_importe.config(text=f"$ {d.importe:,.2f}")
+            from utils.ui_helpers import set_entry
             set_entry(self.e_monto, str(d.monto_abonado or d.importe))
+            self.e_descuento.configure(state="disabled")
 
-        
-
-        # Fecha: si ya tiene fecha de pago mostrarla, si no poner hoy
         if d.fecha_pago:
+            from utils.ui_helpers import set_entry, format_date
             set_entry(self.e_fecha, format_date(d.fecha_pago))
         else:
+            from utils.ui_helpers import set_entry
+            set_entry(self.e_fecha, datetime.now().strftime("%d/%m/%Y"))
+
+        self.e_medio.set(d.medio_pago or "EFECTIVO")
+        session.close()
+
+        if d.fecha_pago:
+            from utils.ui_helpers import set_entry, format_date
+            set_entry(self.e_fecha, format_date(d.fecha_pago))
+        else:
+            from utils.ui_helpers import set_entry
             set_entry(self.e_fecha, datetime.now().strftime("%d/%m/%Y"))
 
         self.e_medio.set(d.medio_pago or "EFECTIVO")
@@ -376,16 +457,17 @@ class PagoDialog(tk.Toplevel):
         if not d:
             session.close()
             return
+        
+        from utils.ui_helpers import parse_float_str, parse_date_str, get_entry, error_dialog
         d.pago          = True
         d.monto_abonado = parse_float_str(get_entry(self.e_monto))
         d.fecha_pago    = parse_date_str(get_entry(self.e_fecha))
         d.medio_pago    = self.e_medio.get() or "EFECTIVO"
+        
         try:
             session.commit()
             from tkinter import messagebox
-            if messagebox.askyesno("Guardado",
-                                   "Pago registrado correctamente.\n¿Querés imprimir el recibo?",
-                                   parent=self):
+            if messagebox.askyesno("Guardado", "Pago registrado correctamente.\n¿Querés imprimir el recibo?", parent=self):
                 self._imprimir_recibo_desde_dialogo(self.deuda_id)
             self.destroy()
         except Exception as ex:
@@ -396,14 +478,19 @@ class PagoDialog(tk.Toplevel):
 
 
 class PagoMultipleDialog(tk.Toplevel):
-    """Registra pago de múltiples deudas seleccionadas a la vez."""
+    """Registra pago de múltiples deudas con moratoria masiva."""
     def __init__(self, parent, ids: list):
         super().__init__(parent)
         self.ids = ids
         self.title(f"Registrar pagos múltiples ({len(ids)} deudas)")
         self.resizable(False, False)
-        center_window(self, 480, 460)
+        center_window(self, 520, 500)
         self.grab_set()
+        
+        self._deudas_data = []
+        self._total_nominal = 0.0
+        self._total_intereses = 0.0
+
         self._build()
         self._load()
 
@@ -412,96 +499,124 @@ class PagoMultipleDialog(tk.Toplevel):
         f.pack(fill="both", expand=True)
         f.columnconfigure(1, weight=1)
 
-        ttk.Label(f, text=f"Se van a registrar {len(self.ids)} pagos:",
-                  font=("Segoe UI", 11, "bold")).grid(
-                  row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        ttk.Label(f, text=f"Se van a registrar {len(self.ids)} pagos:", font=("Segoe UI", 11, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
 
-        # Lista de deudas seleccionadas
-        self.tree_prev = ttk.Treeview(f,
-            columns=("estab", "periodo", "nominal", "actualizado"),
-            show="headings", height=6)
+        self.tree_prev = ttk.Treeview(f, columns=("estab", "periodo", "nominal", "interes"), show="headings", height=6)
         self.tree_prev.heading("estab",      text="Establecimiento")
         self.tree_prev.heading("periodo",    text="Período")
         self.tree_prev.heading("nominal",    text="Nominal")
-        self.tree_prev.heading("actualizado",text="Con intereses")
+        self.tree_prev.heading("interes",    text="Interés")
         self.tree_prev.column("estab",       width=160)
         self.tree_prev.column("periodo",     width=70, anchor="center")
         self.tree_prev.column("nominal",     width=90, anchor="e")
-        self.tree_prev.column("actualizado", width=110, anchor="e")
+        self.tree_prev.column("interes",     width=90, anchor="e")
         self.tree_prev.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
 
-        self.lbl_total = ttk.Label(f, text="", font=("Segoe UI", 10, "bold"),
-                                   foreground=COLORS["accent"])
-        self.lbl_total.grid(row=2, column=0, columnspan=2, sticky="e", pady=(0, 8))
+        # Sección de recálculo de mora
+        ttk.Separator(f, orient="horizontal").grid(row=2, column=0, columnspan=2, sticky="ew", pady=6)
+        
+        ttk.Label(f, text="Descuento masivo en Intereses (%):").grid(row=3, column=0, sticky="w", pady=5)
+        self.e_descuento = ttk.Entry(f, width=8)
+        self.e_descuento.grid(row=3, column=1, sticky="w")
+        self.e_descuento.insert(0, "0")
+        self.e_descuento.bind("<KeyRelease>", self._recalcular_totales)
+        
+        self.lbl_total = ttk.Label(f, text="", font=("Segoe UI", 11, "bold"), foreground=COLORS["accent"])
+        self.lbl_total.grid(row=4, column=0, columnspan=2, sticky="e", pady=8)
 
-        ttk.Separator(f, orient="horizontal").grid(
-            row=3, column=0, columnspan=2, sticky="ew", pady=6)
-
-        ttk.Label(f, text="Fecha de pago").grid(row=4, column=0, sticky="w", pady=5)
+        ttk.Label(f, text="Fecha de pago").grid(row=5, column=0, sticky="w", pady=5)
         self.e_fecha = ttk.Entry(f, width=14)
-        self.e_fecha.grid(row=4, column=1, sticky="w")
+        self.e_fecha.grid(row=5, column=1, sticky="w")
         self.e_fecha.insert(0, datetime.now().strftime("%d/%m/%Y"))
-        ttk.Label(f, text="(dd/mm/aaaa)", font=("Segoe UI", 10)).grid(
-            row=4, column=1, sticky="e")
 
-        ttk.Label(f, text="Medio de pago").grid(row=5, column=0, sticky="w", pady=5)
-        self.e_medio = ttk.Combobox(f, values=["EFECTIVO", "TRANSFERENCIA"],
-                                    width=18, state="readonly")
-        self.e_medio.grid(row=5, column=1, sticky="w")
+        ttk.Label(f, text="Medio de pago").grid(row=6, column=0, sticky="w", pady=5)
+        self.e_medio = ttk.Combobox(f, values=["EFECTIVO", "TRANSFERENCIA"], width=18, state="readonly")
+        self.e_medio.grid(row=6, column=1, sticky="w")
         self.e_medio.set("EFECTIVO")
 
         bar = ttk.Frame(f)
-        bar.grid(row=6, column=0, columnspan=2, pady=(12, 0), sticky="e")
-        ttk.Button(bar, text="Guardar todos", style="Success.TButton",
-                   command=self._guardar).pack(side="right", padx=4)
+        bar.grid(row=7, column=0, columnspan=2, pady=(12, 0), sticky="e")
+        ttk.Button(bar, text="Guardar todos", style="Success.TButton", command=self._guardar).pack(side="right", padx=4)
         ttk.Button(bar, text="Cancelar", command=self.destroy).pack(side="right")
+
+    def _recalcular_totales(self, event=None):
+        desc_str = self.e_descuento.get().strip()
+        try:
+            desc = float(desc_str) if desc_str else 0.0
+        except ValueError:
+            desc = 0.0
+        
+        if desc < 0: desc = 0.0
+        if desc > 100: desc = 100.0
+
+        intereses_con_descuento = self._total_intereses * (1 - (desc / 100.0))
+        nuevo_total = self._total_nominal + intereses_con_descuento
+
+        self.lbl_total.config(text=f"Total a pagar (con dto.): $ {nuevo_total:,.2f}")
 
     def _load(self):
         from reports.documentos_institucionales import _calcular_interes
         session = get_session()
-        total = 0.0
-        self._deudas_data = []
+        
         for did in self.ids:
             d = session.query(Deuda).get(did)
-            if not d:
-                continue
-            nombre = ""
-            if d.establecimiento:
-                nombre = (d.establecimiento.nombre_establecimiento or "").title()
+            if not d: continue
+            
+            nombre = (d.establecimiento.nombre_establecimiento or "").title() if d.establecimiento else ""
+            
             if d.vencimiento and not d.pago:
                 _, _, actualizado = _calcular_interes(d.importe, d.vencimiento)
+                
+                # SOLUCIÓN: Calculamos el dinero real del interés
+                monto_interes = actualizado - d.importe
             else:
-                actualizado = d.importe
-            total += actualizado
+                monto_interes = 0.0
+
+            self._total_nominal += (d.importe or 0.0)
+            self._total_intereses += monto_interes
+
             self._deudas_data.append({
-                "id": did, "actualizado": actualizado, "importe": d.importe
+                "id": did, "nominal": d.importe, "intereses": monto_interes
             })
+            
             self.tree_prev.insert("", "end", values=(
                 nombre,
                 f"{d.periodo}/{d.anio}",
                 f"$ {d.importe:,.2f}",
-                f"$ {actualizado:,.2f}",
+                f"$ {monto_interes:,.2f}",
             ))
+            
         session.close()
-        self.lbl_total.config(text=f"Total a pagar: $ {total:,.2f}")
+        self._recalcular_totales()
 
     def _guardar(self):
+        from utils.ui_helpers import parse_date_str, get_entry, error_dialog
         fecha    = parse_date_str(get_entry(self.e_fecha)) or datetime.now()
         medio    = self.e_medio.get() or "EFECTIVO"
+        
+        desc_str = self.e_descuento.get().strip()
+        try:
+            desc = float(desc_str) if desc_str else 0.0
+        except ValueError:
+            desc = 0.0
+        if desc < 0: desc = 0.0
+        if desc > 100: desc = 100.0
+
         session  = get_session()
         try:
             for item in self._deudas_data:
                 d = session.query(Deuda).get(item["id"])
                 if d:
+                    int_con_descuento = item["intereses"] * (1 - (desc / 100.0))
+                    total_deuda = item["nominal"] + int_con_descuento
+                    
                     d.pago          = True
                     d.fecha_pago    = fecha
-                    d.monto_abonado = item["actualizado"]
+                    d.monto_abonado = total_deuda
                     d.medio_pago    = medio
+            
             session.commit()
-            n = len(self._deudas_data)
-            if messagebox.askyesno("Guardado",
-                    f"{n} pagos registrados.\n¿Querés imprimir el recibo?",
-                    parent=self):
+            if messagebox.askyesno("Guardado", f"{len(self._deudas_data)} pagos registrados.\n¿Querés imprimir el recibo unificado?", parent=self):
                 self._imprimir()
             self.destroy()
         except Exception as ex:
@@ -512,9 +627,9 @@ class PagoMultipleDialog(tk.Toplevel):
 
     def _imprimir(self):
         from reports.documentos_institucionales import doc_recibo_transaccion, _auto_path, abrir_pdf
+        from utils.ui_helpers import error_dialog
         ids = [item["id"] for item in self._deudas_data]
-        if not ids:
-            return
+        if not ids: return
         session = get_session()
         d = session.query(Deuda).get(ids[0])
         codigo = d.codigo_establecimiento if d else "EST"
@@ -529,7 +644,6 @@ class PagoMultipleDialog(tk.Toplevel):
             abrir_pdf(path)
         except Exception as ex:
             error_dialog(self, "Error PDF", str(ex))
-
 
 class DeudaDialog(tk.Toplevel):
     """Alta manual de una deuda."""

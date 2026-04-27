@@ -395,6 +395,14 @@ class EstablecimientoDialog(tk.Toplevel):
                     entry.configure(state="disabled")
             cb.bind("<<ComboboxSelected>>", _on_select)
 
+        # ---> NUEVO: Checkbox de Pago Express (solo visible en alta nueva)
+        if not self.codigo:
+            ttk.Separator(f, orient="horizontal").grid(row=4, column=0, columnspan=4, sticky="ew", pady=(20, 10))
+            self.pago_express_var = tk.BooleanVar(value=False)
+            chk = ttk.Checkbutton(f, text="💰 ¿Abonó la tasa de inscripción en ventanilla? (Pago Express)",
+                                  variable=self.pago_express_var)
+            chk.grid(row=5, column=0, columnspan=4, sticky="w", pady=5)
+
     def _build_obs(self, f):
         ttk.Label(f, text="Solicitudes").pack(anchor="w")
         self.e_solicitudes = ttk.Entry(f, width=60)
@@ -560,23 +568,47 @@ class EstablecimientoDialog(tk.Toplevel):
                 id_emision     = f"{periodo_actual}-{anio_actual}"
                 emision        = session.query(Emision).get(id_emision)
                 vencimiento    = emision.vencimiento if emision else None
+                
+                # Calcular el importe sumando rubro principal y anexos
+                importe_total = (e.monto or 0.0) + (e.monto1 or 0.0) + (e.monto2 or 0.0) + (e.monto3 or 0.0)
+
+                # Verificar si tildaron el Pago Express en la UI
+                es_pago_express = getattr(self, "pago_express_var", tk.BooleanVar(value=False)).get()
+
                 deuda = Deuda(
                     codigo_establecimiento = e.codigo_establecimiento,
                     anio                  = anio_actual,
                     periodo               = periodo_actual,
                     vencimiento           = vencimiento,
-                    importe               = e.monto_total or 0.0,
-                    pago                  = False,
-                    monto_abonado         = 0.0,
+                    importe               = importe_total,
+                    pago                  = es_pago_express,
+                    monto_abonado         = importe_total if es_pago_express else 0.0,
+                    fecha_pago            = datetime.now() if es_pago_express else None,
+                    medio_pago            = "EFECTIVO" if es_pago_express else None
                 )
                 session.add(deuda)
                 session.commit()
-                info_dialog(self, "Guardado",
-                    f"Establecimiento guardado correctamente.\n"
-                    f"Se generó la deuda inicial: período {periodo_actual}/{anio_actual} "
-                    f"por $ {e.monto_total:,.2f}.")
+                
+                # Mensajes y acción post-guardado
+                if es_pago_express:
+                    if messagebox.askyesno("Guardado Exitoso",
+                            f"✅ Establecimiento guardado y tasa inicial COBRADA por $ {importe_total:,.2f}.\n\n"
+                            f"¿Querés imprimir el recibo de pago ahora?", parent=self):
+                        from reports.documentos_institucionales import doc_detalle_deuda, _auto_path, abrir_pdf
+                        try:
+                            path = _auto_path(f"recibo_pago_{e.codigo_establecimiento}.pdf")
+                            doc_detalle_deuda(session, path, e.codigo_establecimiento, solo_impagas=False)
+                            abrir_pdf(path)
+                        except Exception as ex:
+                            error_dialog(self, "Error al imprimir recibo", str(ex))
+                else:
+                    info_dialog(self, "Guardado",
+                        f"Establecimiento guardado correctamente.\n"
+                        f"Se generó la deuda inicial (IMPAGA): período {periodo_actual}/{anio_actual} "
+                        f"por $ {importe_total:,.2f}.")
             else:
-                info_dialog(self, "Guardado", "Establecimiento guardado correctamente.")
+                info_dialog(self, "Guardado", "Establecimiento modificado correctamente.")
+            
             self.destroy()
         except Exception as ex:
             session.rollback()

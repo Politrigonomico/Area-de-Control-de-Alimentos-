@@ -477,17 +477,18 @@ def doc_recibo_inicio_tramite(session, output_path: str, codigo_inscripcion: int
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# DOCUMENTO 3: RECIBO DE TRANSACCIÓN DE PAGO DE DEUDA
+# DOCUMENTO 3: RECIBO DE TRANSACCIÓN O DETALLE DE SELECCIÓN
 # ════════════════════════════════════════════════════════════════════════════
 
 def doc_recibo_transaccion(session, output_path: str, codigos_deuda: list):
     """
-    Genera un recibo con ÚNICAMENTE las deudas indicadas por ID.
+    Genera un documento con la selección de deudas. 
+    Cambia el título automáticamente según el estado de pago.
     """
     from database.models import Deuda, Establecimiento
 
     if not codigos_deuda:
-        raise ValueError("No se indicaron deudas para el recibo.")
+        raise ValueError("No se indicaron deudas para el documento.")
 
     deudas = session.query(Deuda).filter(
         Deuda.codigo_deuda.in_(codigos_deuda)
@@ -496,28 +497,32 @@ def doc_recibo_transaccion(session, output_path: str, codigos_deuda: list):
     if not deudas:
         raise ValueError("No se encontraron las deudas indicadas.")
 
+    # NUEVO: Lógica de título inteligente
+    todas_pagadas = all(d.pago for d in deudas)
+    titulo_doc = "Recibo de Pago\nTransacción" if todas_pagadas else "Detalle de Deuda\nSelección"
+
     codigo_estab = deudas[0].codigo_establecimiento
     e = session.query(Establecimiento).get(codigo_estab.upper())
     nombre_estab = (e.nombre_establecimiento or "").upper() if e else codigo_estab
 
     filas = []
-    total_a_pagar = 0.0
+    total_final = 0.0
     for d in deudas:
-        if d.vencimiento:
-            meses, int_acum, actualizado = _calcular_interes(d.importe, d.vencimiento)
+        if d.vencimiento and not d.pago:
+            meses, _, actualizado = _calcular_interes(d.importe, d.vencimiento)
+            int_dinero = actualizado - d.importe
         else:
-            meses, int_acum, actualizado = 0, 0, d.importe
-        total_a_pagar += actualizado
+            meses, int_dinero, actualizado = 0, 0.0, (d.monto_abonado or d.importe)
+        
+        total_final += actualizado
         filas.append({
             "periodo":    d.periodo,
             "anio":       d.anio,
             "nominal":    d.importe,
-            "tiempo":     meses,
-            "tasa":       TASA_MENSUAL,
-            "int_acum":   int_acum,
+            "tiempo":     meses if not d.pago else "-",
+            "estado":     "PAGADO" if d.pago else "IMPAGO",
+            "int_acum":   int_dinero,
             "actualizado":actualizado,
-            "medio":      d.medio_pago or "EFECTIVO",
-            "fecha_pago": _fmt_fecha(d.fecha_pago),
         })
 
     doc = SimpleDocTemplate(
@@ -527,38 +532,24 @@ def doc_recibo_transaccion(session, output_path: str, codigos_deuda: list):
     )
     story = []
 
-    _cabecera_institucional(story, "Recibo de Pago\nTransacción", {})
+    _cabecera_institucional(story, titulo_doc, {})
     story.append(Spacer(1, 0.3*cm))
 
-    story.append(Paragraph(
-        f"Código Establecimiento: <b>{codigo_estab}</b>",
-        ParagraphStyle("f", fontName="Helvetica", fontSize=11)))
-    story.append(Paragraph(
-        f"Nombre Establecimiento: <b>{nombre_estab}</b>",
-        ParagraphStyle("f", fontName="Helvetica", fontSize=11)))
-    story.append(Paragraph(
-        f"Fecha de emisión: <b>{_fecha_larga_es()}</b>",
-        ParagraphStyle("f", fontName="Helvetica", fontSize=10,
-                       textColor=colors.HexColor("#555555"))))
+    story.append(Paragraph(f"Código Establecimiento: <b>{codigo_estab}</b>", ParagraphStyle("f", fontName="Helvetica", fontSize=11)))
+    story.append(Paragraph(f"Nombre Establecimiento: <b>{nombre_estab}</b>", ParagraphStyle("f", fontName="Helvetica", fontSize=11)))
+    story.append(Paragraph(f"Fecha de emisión: <b>{_fecha_larga_es()}</b>", ParagraphStyle("f", fontName="Helvetica", fontSize=10, textColor=colors.HexColor("#555555"))))
     story.append(Spacer(1, 0.4*cm))
 
     encabezado = [
-        Paragraph("<b>Período</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
-        Paragraph("<b>Año</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
-        Paragraph("<b>Imp. Nominal</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
-        Paragraph("<b>Tiempo</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
-        Paragraph("<b>Tasa</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
-        Paragraph("<b>Int. Acum.</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
-        Paragraph("<b>Total</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Período</b>", ParagraphStyle("th", fontName="Helvetica-Bold", fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Año</b>", ParagraphStyle("th", fontName="Helvetica-Bold", fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Imp. Nominal</b>", ParagraphStyle("th", fontName="Helvetica-Bold", fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Mora</b>", ParagraphStyle("th", fontName="Helvetica-Bold", fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Estado</b>", ParagraphStyle("th", fontName="Helvetica-Bold", fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Int. Acum.</b>", ParagraphStyle("th", fontName="Helvetica-Bold", fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Total</b>", ParagraphStyle("th", fontName="Helvetica-Bold", fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
     ]
-    col_w = [2*cm, 1.8*cm, 3*cm, 1.8*cm, 1.8*cm, 2.6*cm, 3.4*cm]
+    col_w = [1.8*cm, 1.4*cm, 2.5*cm, 1.5*cm, 2.5*cm, 2.5*cm, 3.8*cm]
 
     tabla_data = [encabezado]
     for f in filas:
@@ -567,48 +558,34 @@ def doc_recibo_transaccion(session, output_path: str, codigos_deuda: list):
             str(f["anio"] or ""),
             _fmt_moneda(f["nominal"]),
             str(f["tiempo"]),
-            str(f["tasa"]),
-            str(f["int_acum"]),
+            f["estado"],
+            _fmt_moneda(f["int_acum"]) if f["estado"] == "IMPAGO" else "-",
             _fmt_moneda(f["actualizado"]),
         ])
 
-    from reportlab.lib import colors as _colors
-    GRIS_FILA2 = _colors.HexColor("#f2f2f2")
     t = Table(tabla_data, colWidths=col_w, repeatRows=1)
     t.setStyle(TableStyle([
         ("BACKGROUND",    (0,0), (-1,0), AZUL),
-        ("TEXTCOLOR",     (0,0), (-1,0), _colors.white),
+        ("TEXTCOLOR",     (0,0), (-1,0), colors.white),
         ("FONTNAME",      (0,0), (-1,0), "Helvetica-Bold"),
         ("FONTSIZE",      (0,0), (-1,-1), 9),
         ("ALIGN",         (0,0), (-1,0), "CENTER"),
         ("ALIGN",         (0,1), (-1,-1), "CENTER"),
-        ("ROWBACKGROUNDS",(0,1), (-1,-1), [_colors.white, GRIS_FILA2]),
-        ("GRID",          (0,0), (-1,-1), 0.3, _colors.HexColor("#cccccc")),
+        ("ROWBACKGROUNDS",(0,1), (-1,-1), [colors.white, GRIS_FILA]),
+        ("GRID",          (0,0), (-1,-1), 0.3, colors.HexColor("#cccccc")),
         ("TOPPADDING",    (0,0), (-1,-1), 4),
         ("BOTTOMPADDING", (0,0), (-1,-1), 4),
     ]))
     story.append(t)
     story.append(Spacer(1, 0.4*cm))
 
-    medio = filas[0]["medio"] if filas else "EFECTIVO"
-    story.append(Paragraph(
-        f"Medio de pago: <b>{medio}</b>",
-        ParagraphStyle("mp", fontName="Helvetica", fontSize=10)))
-    story.append(Spacer(1, 0.2*cm))
-
+    # Etiqueta de total dinámica
+    lbl_total = "TOTAL ABONADO:" if todas_pagadas else "TOTAL A PAGAR:"
     total_data = [[
-        Paragraph("TOTAL ABONADO:",
-                  ParagraphStyle("tp", fontName="Helvetica-Bold", fontSize=12,
-                                 alignment=TA_RIGHT)),
-        Paragraph(f"<b>{_fmt_moneda(total_a_pagar)}</b>",
-                  ParagraphStyle("tv", fontName="Helvetica-Bold", fontSize=13,
-                                 textColor=AZUL, alignment=TA_RIGHT)),
+        Paragraph(lbl_total, ParagraphStyle("tp", fontName="Helvetica-Bold", fontSize=12, alignment=TA_RIGHT)),
+        Paragraph(f"<b>{_fmt_moneda(total_final)}</b>", ParagraphStyle("tv", fontName="Helvetica-Bold", fontSize=13, textColor=AZUL, alignment=TA_RIGHT)),
     ]]
-    story.append(Table(total_data, colWidths=[14*cm, 4*cm]))
-    story.append(Spacer(1, 0.4*cm))
-    story.append(Paragraph(
-        f"Fighiera, {_fecha_larga_es()}",
-        ParagraphStyle("fecha", fontName="Helvetica", fontSize=10, alignment=TA_RIGHT)))
+    story.append(Table(total_data, colWidths=[12*cm, 4*cm]))
 
     doc.build(story, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
     return output_path
@@ -734,7 +711,7 @@ def doc_recibo_tasa_inscripcion(session, output_path: str, codigo_establecimient
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# DOCUMENTO 5: DETALLE DE DEUDA CON INTERESES
+# DOCUMENTO 5: DETALLE DE DEUDA / ESTADO DE CUENTA
 # ════════════════════════════════════════════════════════════════════════════
 
 def doc_detalle_deuda(session, output_path: str, codigo_establecimiento: str,
@@ -753,18 +730,23 @@ def doc_detalle_deuda(session, output_path: str, codigo_establecimiento: str,
     filas = []
     total_a_pagar = 0.0
     for d in deudas:
-        if d.vencimiento:
-            meses, int_acum, actualizado = _calcular_interes(d.importe, d.vencimiento)
+        if d.vencimiento and not d.pago:
+            meses, int_porcentaje, actualizado = _calcular_interes(d.importe, d.vencimiento)
+            int_dinero = actualizado - d.importe
         else:
-            meses, int_acum, actualizado = 0, 0, d.importe
-        total_a_pagar += actualizado
+            meses, int_dinero, actualizado = 0, 0.0, (d.monto_abonado or d.importe)
+        
+        # SOLUCIÓN: Solo sumamos al "Total Adeudado" si la deuda no está pagada
+        if not d.pago:
+            total_a_pagar += actualizado
+            
         filas.append({
             "periodo":    d.periodo,
             "anio":       d.anio,
             "nominal":    d.importe,
-            "tiempo":     meses,
-            "tasa":       TASA_MENSUAL,
-            "int_acum":   int_acum,
+            "tiempo":     meses if not d.pago else "-",
+            "estado":     "PAGADO" if d.pago else "IMPAGO",
+            "int_acum":   int_dinero,
             "actualizado":actualizado,
             "pagado":     d.pago,
         })
@@ -776,7 +758,9 @@ def doc_detalle_deuda(session, output_path: str, codigo_establecimiento: str,
     )
     story = []
 
-    _cabecera_institucional(story, "Detalle de Deuda\nRecibo", {})
+    # SOLUCIÓN: Título cambia automáticamente si es solo deuda o historial
+    titulo_doc = "Detalle de Deudas\n(Impagas)" if solo_impagas else "Estado de Cuenta\n(Historial)"
+    _cabecera_institucional(story, titulo_doc, {})
     story.append(Spacer(1, 0.3*cm))
 
     story.append(Paragraph(
@@ -788,22 +772,15 @@ def doc_detalle_deuda(session, output_path: str, codigo_establecimiento: str,
     story.append(Spacer(1, 0.4*cm))
 
     encabezado = [
-        Paragraph("<b>Período</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
-        Paragraph("<b>Año</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
-        Paragraph("<b>Imp. Nominal</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
-        Paragraph("<b>Tiempo</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
-        Paragraph("<b>Tasa Interés</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
-        Paragraph("<b>Int. Acumulado</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
-        Paragraph("<b>Importe Actualizado</b>", ParagraphStyle("th", fontName="Helvetica-Bold",
-                  fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Período</b>", ParagraphStyle("th", fontName="Helvetica-Bold", fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Año</b>", ParagraphStyle("th", fontName="Helvetica-Bold", fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Imp. Nominal</b>", ParagraphStyle("th", fontName="Helvetica-Bold", fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Mora</b>", ParagraphStyle("th", fontName="Helvetica-Bold", fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Estado</b>", ParagraphStyle("th", fontName="Helvetica-Bold", fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Int. Acum.</b>", ParagraphStyle("th", fontName="Helvetica-Bold", fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
+        Paragraph("<b>Total</b>", ParagraphStyle("th", fontName="Helvetica-Bold", fontSize=9, alignment=TA_CENTER, textColor=colors.white)),
     ]
-    col_w = [2*cm, 1.8*cm, 3*cm, 1.8*cm, 2.5*cm, 3*cm, 3.9*cm]
+    col_w = [1.8*cm, 1.4*cm, 2.5*cm, 1.5*cm, 2.5*cm, 2.5*cm, 2.8*cm]
 
     tabla_data = [encabezado]
     for f in filas:
@@ -812,8 +789,8 @@ def doc_detalle_deuda(session, output_path: str, codigo_establecimiento: str,
             str(f["anio"] or ""),
             _fmt_moneda(f["nominal"]),
             str(f["tiempo"]),
-            str(f["tasa"]),
-            str(f["int_acum"]),
+            f["estado"],
+            _fmt_moneda(f["int_acum"]) if not f["pagado"] else "-",
             _fmt_moneda(f["actualizado"]),
         ])
 
@@ -836,28 +813,16 @@ def doc_detalle_deuda(session, output_path: str, codigo_establecimiento: str,
     story.append(t)
 
     story.append(Spacer(1, 0.4*cm))
+    
     total_data = [[
-        Paragraph("TOTAL A PAGAR:",
-                  ParagraphStyle("tp", fontName="Helvetica-Bold", fontSize=12,
-                                 alignment=TA_RIGHT)),
-        Paragraph(f"<b>{_fmt_moneda(total_a_pagar)}</b>",
-                  ParagraphStyle("tv", fontName="Helvetica-Bold", fontSize=13,
-                                 textColor=AZUL, alignment=TA_RIGHT)),
+        Paragraph("TOTAL ADEUDADO:", ParagraphStyle("tp", fontName="Helvetica-Bold", fontSize=12, alignment=TA_RIGHT)),
+        Paragraph(f"<b>{_fmt_moneda(total_a_pagar)}</b>", ParagraphStyle("tv", fontName="Helvetica-Bold", fontSize=13, textColor=AZUL, alignment=TA_RIGHT)),
     ]]
-    story.append(Table(total_data, colWidths=[14*cm, 4*cm]))
+    story.append(Table(total_data, colWidths=[11*cm, 4*cm]))
 
     story.append(Spacer(1, 0.5*cm))
-    story.append(Paragraph(
-        f"Fighiera  {_fecha_larga_es()}",
-        ParagraphStyle("fecha", fontName="Helvetica", fontSize=10,
-                       alignment=TA_RIGHT)
-    ))
+    story.append(Paragraph(f"Fighiera  {_fecha_larga_es()}", ParagraphStyle("fecha", fontName="Helvetica", fontSize=10, alignment=TA_RIGHT)))
     story.append(Spacer(1, 0.3*cm))
-    story.append(Paragraph(
-        "Página 1 de 1",
-        ParagraphStyle("pag", fontName="Helvetica", fontSize=8,
-                       textColor=GRIS, alignment=TA_LEFT)
-    ))
 
     doc.build(story, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
     return output_path
