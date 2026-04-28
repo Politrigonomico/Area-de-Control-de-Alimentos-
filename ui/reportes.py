@@ -1,5 +1,5 @@
 """
-Panel de Reportes PDF.
+Panel de Reportes — Alta Visibilidad con Tarjetas Azules.
 """
 import os
 import tkinter as tk
@@ -8,40 +8,71 @@ from datetime import datetime
 
 from database.db import get_session
 from utils.ui_helpers import (
-    COLORS, FONT_TITLE, FONT_NORMAL,
     center_window, error_dialog, info_dialog,
 )
 
+# Configuración de accesibilidad local
+F_GRANDE = ("Segoe UI", 14)
+F_BOTON  = ("Segoe UI", 13, "bold")
+F_TITULO = ("Segoe UI", 26, "bold")
 
-class ReportesFrame(ttk.Frame):
+COLOR_BG = "#FFFFFF"       # Fondo de la pantalla (Blanco)
+COLOR_TXT = "#000000"      # Texto general (Negro)
+CARD_BG = "#1a3a5c"        # Fondo de las tarjetas (Azul oscuro institucional)
+CARD_FG = "#ffffff"        # Texto dentro de las tarjetas (Blanco)
+
+class ReportesFrame(tk.Frame):
     def __init__(self, parent):
-        super().__init__(parent)
+        super().__init__(parent, bg=COLOR_BG)
         self._build()
 
     def _build(self):
-        ttk.Label(self, text="Reportes PDF", font=FONT_TITLE).pack(anchor="w", pady=(0, 20))
+        header = tk.Frame(self, bg=COLOR_BG)
+        header.pack(fill="x", padx=20, pady=(20, 10))
+        
+        tk.Label(header, text="PANEL DE REPORTES", font=F_TITULO, 
+                 bg=COLOR_BG, fg=COLOR_TXT).pack(anchor="w")
+        
+        tk.Label(header, text="Seleccioná un reporte para generar el documento PDF.", 
+                 font=F_GRANDE, bg=COLOR_BG, fg="#333333").pack(anchor="w")
+
+        grid_frame = tk.Frame(self, bg=COLOR_BG, padx=10, pady=10)
+        grid_frame.pack(fill="both", expand=True)
+        
+        grid_frame.columnconfigure(0, weight=1)
+        grid_frame.columnconfigure(1, weight=1)
 
         cards = [
             ("📋  Padrón de Establecimientos",
-             "Lista completa de establecimientos con datos y estado de trámite.",
+             "Lista de todos los locales comerciales con sus datos.",
              self._rpt_establecimientos),
             ("💰  Estado de Deudas",
-             "Detalle de deudas por año, período y estado de pago.",
+             "Resumen de pagos pendientes y realizados por año.",
              self._rpt_deudas),
             ("🏪  Ficha de Establecimiento",
-             "Ficha individual con todos los datos e historial de deudas.",
+             "Todos los datos y deudas de un local específico.",
              self._rpt_ficha),
             ("🔍  Registro de Auditorías",
-             "Listado completo de auditorías realizadas.",
+             "Listado de inspecciones realizadas en un rango de fechas.",
              self._rpt_auditorias),
         ]
 
-        for titulo, desc, cmd in cards:
-            card = ttk.LabelFrame(self, text=titulo, padding=14)
-            card.pack(fill="x", padx=4, pady=6)
-            ttk.Label(card, text=desc, font=("Segoe UI", 11),
-                      foreground=COLORS["text_light"]).pack(anchor="w", pady=(0, 8))
-            ttk.Button(card, text="Generar PDF →", command=cmd).pack(anchor="w")
+        for i, (titulo, desc, cmd) in enumerate(cards):
+            row = i // 2
+            col = i % 2
+            
+            # Tarjeta con fondo Azul Oscuro y letras Blancas
+            card = tk.LabelFrame(grid_frame, text=f" {titulo} ", font=F_BOTON,
+                                 bg=CARD_BG, fg=CARD_FG, bd=2, padx=20, pady=20)
+            card.grid(row=row, column=col, padx=15, pady=15, sticky="nsew")
+            
+            tk.Label(card, text=desc, font=F_GRANDE, bg=CARD_BG, fg="#e2e8f0",
+                     wraplength=400, justify="left").pack(anchor="w", pady=(0, 20))
+            
+            btn = tk.Button(card, text="GENERAR PDF AHORA", font=F_BOTON,
+                            bg="#f7fafc", fg=CARD_BG, padx=25, pady=12,
+                            relief="raised", cursor="hand2", command=cmd)
+            btn.pack(anchor="w")
 
     def _ask_save_path(self, default_name: str) -> str | None:
         return filedialog.asksaveasfilename(
@@ -51,146 +82,126 @@ class ReportesFrame(ttk.Frame):
             title="Guardar reporte como...",
         )
 
-    def _open_pdf(self, path: str):
-        """Intenta abrir el PDF con el visor del sistema."""
+    def _open_file(self, path: str):
         try:
-            import subprocess, sys
-            if sys.platform.startswith("win"):
-                os.startfile(path)
-            elif sys.platform.startswith("darwin"):
-                subprocess.Popen(["open", path])
+            if os.name == 'nt': os.startfile(path)
             else:
+                import subprocess
                 subprocess.Popen(["xdg-open", path])
-        except Exception:
-            pass
+        except: pass
+
+    def _iniciar_carga(self):
+        self.winfo_toplevel().config(cursor="wait")
+        self.update()
+
+    def _detener_carga(self):
+        self.winfo_toplevel().config(cursor="")
+        self.update()
+
+    # --- Lógica de generación ---
 
     def _rpt_establecimientos(self):
         from reports.pdf_reports import reporte_establecimientos
-
         var = tk.BooleanVar(value=True)
-        win = tk.Toplevel(self)
-        win.title("Opciones")
-        win.resizable(False, False)
-        center_window(win, 320, 140)
-        win.grab_set()
-        ttk.Label(win, text="¿Solo establecimientos activos?",
-                  padding=14).pack()
-        ttk.Checkbutton(win, text="Solo activos (excluir bajas)",
-                        variable=var).pack()
+        win = tk.Toplevel(self); win.title("Opciones"); win.grab_set()
+        win.config(bg=COLOR_BG); center_window(win, 400, 180)
+        
+        tk.Label(win, text="¿Incluir solo locales activos?", font=F_GRANDE, bg=COLOR_BG).pack(pady=20)
+        tk.Checkbutton(win, text="Sí, excluir bajas", variable=var, font=F_GRANDE, bg=COLOR_BG).pack()
+        
         def generar():
             win.destroy()
-            path = self._ask_save_path(
-                f"padron_establecimientos_{datetime.now().strftime('%Y%m%d')}.pdf")
-            if not path:
-                return
+            path = self._ask_save_path(f"padron_{datetime.now().strftime('%Y%m%d')}.pdf")
+            if not path: return
+            self._iniciar_carga()
             try:
                 session = get_session()
                 reporte_establecimientos(session, path, solo_activos=var.get())
-                session.close()
-                info_dialog(self, "Listo", f"PDF generado:\n{path}")
-                self._open_pdf(path)
-            except Exception as ex:
-                error_dialog(self, "Error al generar PDF", str(ex))
-        ttk.Button(win, text="Generar", style="Success.TButton",
-                   command=generar, padding=6).pack(pady=10)
+                session.close(); self._detener_carga()
+                self._open_file(path)
+            except Exception as ex: self._detener_carga(); error_dialog(self, "Error", str(ex))
+        tk.Button(win, text="GENERAR", font=F_BOTON, command=generar, bg="#CBD5E0").pack(pady=20)
 
     def _rpt_deudas(self):
         from reports.pdf_reports import reporte_deudas
-
-        win = tk.Toplevel(self)
-        win.title("Opciones — Deudas")
-        win.resizable(False, False)
-        center_window(win, 320, 200)
-        win.grab_set()
-        f = ttk.Frame(win, padding=16)
-        f.pack(fill="both")
-
-        ttk.Label(f, text="Año (vacío = todos):").grid(row=0, column=0, sticky="w", pady=4)
-        e_anio = ttk.Entry(f, width=8)
-        e_anio.grid(row=0, column=1, sticky="w", pady=4)
-
+        win = tk.Toplevel(self); win.title("Opciones Deuda"); win.grab_set()
+        win.config(bg=COLOR_BG); center_window(win, 400, 250)
+        
+        f = tk.Frame(win, bg=COLOR_BG, padx=20, pady=20); f.pack()
+        tk.Label(f, text="Año (vacio=todos):", font=F_GRANDE, bg=COLOR_BG).grid(row=0, column=0, pady=10)
+        e_anio = tk.Entry(f, font=F_GRANDE, width=10); e_anio.grid(row=0, column=1)
+        
         v_imp = tk.BooleanVar(value=False)
-        ttk.Checkbutton(f, text="Solo deudas impagas", variable=v_imp).grid(
-            row=1, column=0, columnspan=2, sticky="w", pady=4)
-
+        tk.Checkbutton(f, text="Solo deudas impagas", variable=v_imp, font=F_GRANDE, bg=COLOR_BG).grid(row=1, column=0, columnspan=2, pady=10)
+        
         def generar():
-            anio_s = e_anio.get().strip()
-            anio   = int(anio_s) if anio_s.isdigit() else None
+            anio = int(e_anio.get()) if e_anio.get().isdigit() else None
             win.destroy()
-            path = self._ask_save_path(
-                f"deudas_{anio or 'todos'}_{datetime.now().strftime('%Y%m%d')}.pdf")
-            if not path:
-                return
+            path = self._ask_save_path(f"deudas_{anio or 'todas'}.pdf")
+            if not path: return
+            self._iniciar_carga()
             try:
                 session = get_session()
                 reporte_deudas(session, path, anio=anio, solo_impagas=v_imp.get())
-                session.close()
-                info_dialog(self, "Listo", f"PDF generado:\n{path}")
-                self._open_pdf(path)
-            except Exception as ex:
-                error_dialog(self, "Error al generar PDF", str(ex))
-
-        ttk.Button(f, text="Generar", style="Success.TButton",
-                   command=generar, padding=6).grid(row=2, column=0, columnspan=2, pady=12)
+                session.close(); self._detener_carga()
+                self._open_file(path)
+            except Exception as ex: self._detener_carga(); error_dialog(self, "Error", str(ex))
+        tk.Button(win, text="GENERAR", font=F_BOTON, command=generar, bg="#CBD5E0").pack()
 
     def _rpt_ficha(self):
         from reports.pdf_reports import reporte_ficha_establecimiento
         from database.models import Establecimiento
-
-        win = tk.Toplevel(self)
-        win.title("Ficha de establecimiento")
-        win.resizable(False, False)
-        center_window(win, 400, 140)
-        win.grab_set()
-        f = ttk.Frame(win, padding=16)
-        f.pack(fill="both")
-
-        ttk.Label(f, text="Establecimiento:").grid(row=0, column=0, sticky="w", pady=6, padx=(0, 8))
+        win = tk.Toplevel(self); win.title("Ficha Local"); win.grab_set()
+        win.config(bg=COLOR_BG); center_window(win, 550, 200)
+        
+        tk.Label(win, text="Seleccioná el establecimiento:", font=F_GRANDE, bg=COLOR_BG).pack(pady=15)
         session = get_session()
-        estabs = session.query(Establecimiento).order_by(
-            Establecimiento.nombre_establecimiento).all()
-        estab_map = {
-            f"{e.codigo_establecimiento} — {(e.nombre_establecimiento or '').title()}": e.codigo_establecimiento
-            for e in estabs}
+        estabs = session.query(Establecimiento).order_by(Establecimiento.nombre_establecimiento).all()
+        emap = {f"{e.codigo_establecimiento} - {e.nombre_establecimiento}": e.codigo_establecimiento for e in estabs}
         session.close()
-
-        cb = ttk.Combobox(f, values=list(estab_map.keys()), width=36, state="readonly")
-        cb.grid(row=0, column=1, sticky="ew", pady=6)
-
+        
+        cb = ttk.Combobox(win, values=list(emap.keys()), width=50, font=("Segoe UI", 12), state="readonly")
+        cb.pack(pady=10)
+        
         def generar():
-            key = cb.get()
-            if not key:
-                error_dialog(win, "Error", "Seleccioná un establecimiento.")
-                return
-            codigo = estab_map[key]
-            win.destroy()
-            path = self._ask_save_path(f"ficha_{codigo}_{datetime.now().strftime('%Y%m%d')}.pdf")
-            if not path:
-                return
+            if not cb.get(): return
+            codigo = emap[cb.get()]; win.destroy()
+            path = self._ask_save_path(f"ficha_{codigo}.pdf")
+            if not path: return
+            self._iniciar_carga()
             try:
                 session = get_session()
                 reporte_ficha_establecimiento(session, path, codigo)
-                session.close()
-                info_dialog(self, "Listo", f"PDF generado:\n{path}")
-                self._open_pdf(path)
-            except Exception as ex:
-                error_dialog(self, "Error al generar PDF", str(ex))
-
-        ttk.Button(f, text="Generar", style="Success.TButton",
-                   command=generar, padding=6).grid(row=1, column=0, columnspan=2, pady=10)
+                session.close(); self._detener_carga()
+                self._open_file(path)
+            except Exception as ex: self._detener_carga(); error_dialog(self, "Error", str(ex))
+        tk.Button(win, text="GENERAR FICHA", font=F_BOTON, command=generar, bg="#CBD5E0").pack(pady=15)
 
     def _rpt_auditorias(self):
         from reports.pdf_reports import reporte_auditorias
-
-        path = self._ask_save_path(
-            f"auditorias_{datetime.now().strftime('%Y%m%d')}.pdf")
-        if not path:
-            return
-        try:
-            session = get_session()
-            reporte_auditorias(session, path)
-            session.close()
-            info_dialog(self, "Listo", f"PDF generado:\n{path}")
-            self._open_pdf(path)
-        except Exception as ex:
-            error_dialog(self, "Error al generar PDF", str(ex))
+        from utils.ui_helpers import parse_date_str
+        win = tk.Toplevel(self); win.title("Filtro Auditorías"); win.grab_set()
+        win.config(bg=COLOR_BG); center_window(win, 450, 250)
+        
+        f = tk.Frame(win, bg=COLOR_BG, padx=20, pady=20); f.pack()
+        tk.Label(f, text="Desde (dd/mm/aaaa):", font=F_GRANDE, bg=COLOR_BG).grid(row=0, column=0, pady=10)
+        e_desde = tk.Entry(f, font=F_GRANDE, width=15); e_desde.grid(row=0, column=1)
+        
+        tk.Label(f, text="Hasta (dd/mm/aaaa):", font=F_GRANDE, bg=COLOR_BG).grid(row=1, column=0, pady=10)
+        e_hasta = tk.Entry(f, font=F_GRANDE, width=15); e_hasta.grid(row=1, column=1)
+        
+        def generar():
+            d_str, h_str = e_desde.get().strip(), e_hasta.get().strip()
+            f_desde = parse_date_str(d_str) if d_str else None
+            f_hasta = parse_date_str(h_str) if h_str else None
+            win.destroy()
+            path = self._ask_save_path("auditorias_filtradas.pdf")
+            if not path: return
+            self._iniciar_carga()
+            try:
+                session = get_session()
+                reporte_auditorias(session, path, fecha_desde=f_desde, fecha_hasta=f_hasta)
+                session.close(); self._detener_carga()
+                self._open_file(path)
+            except Exception as ex: self._detener_carga(); error_dialog(self, "Error", str(ex))
+        tk.Button(win, text="GENERAR AUDITORÍAS", font=F_BOTON, command=generar, bg="#CBD5E0").pack()

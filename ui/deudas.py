@@ -257,33 +257,35 @@ class DeudasFrame(ttk.Frame):
         ids = self._selected_ids()
         if not ids:
             return
-        session = get_session()
-        pagadas = [session.query(Deuda).get(did)
-                   for did in ids
-                   if session.query(Deuda).get(did) and session.query(Deuda).get(did).pago]
-        session.close()
-        if not pagadas:
-            messagebox.showinfo("Sin cambios",
-                "Ninguna deuda seleccionada está marcada como pagada.")
-            return
-        if not confirm_dialog(self, "Cancelar pago",
-                f"¿Revertir el pago de {len(pagadas)} deuda(s) a IMPAGO?"):
-            return
+            
         session = get_session()
         try:
+            # OPTIMIZACIÓN: Solo 1 consulta filtrando directamente por los IDs seleccionados que estén pagados
+            pagadas = session.query(Deuda).filter(Deuda.codigo_deuda.in_(ids), Deuda.pago == True).all()
+            
+            if not pagadas:
+                messagebox.showinfo("Sin cambios", "Ninguna deuda seleccionada está marcada como pagada.")
+                return
+                
+            if not confirm_dialog(self, "Cancelar pago", f"¿Revertir el pago de {len(pagadas)} deuda(s) a IMPAGO?"):
+                return
+                
             for d in pagadas:
-                d_db = session.query(Deuda).get(d.codigo_deuda)
-                d_db.pago          = False
-                d_db.fecha_pago    = None
-                d_db.monto_abonado = 0.0
-                d_db.medio_pago    = None
+                d.pago          = False
+                d.fecha_pago    = None
+                d.monto_abonado = 0.0
+                d.medio_pago    = None
+                
             session.commit()
             info_dialog(self, "Listo", f"{len(pagadas)} pago(s) revertidos a IMPAGO.")
+            
         except Exception as ex:
             session.rollback()
+            from utils.ui_helpers import error_dialog
             error_dialog(self, "Error", str(ex))
         finally:
             session.close()
+            
         self.refresh()
 
     def _nueva_deuda(self):

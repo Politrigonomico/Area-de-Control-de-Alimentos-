@@ -13,7 +13,6 @@ from utils.ui_helpers import (
     center_window, confirm_dialog, info_dialog, error_dialog,
 )
 
-
 # ═══════════════════════════════════════════════════════════════════════
 #  AUDITORÍAS
 # ═══════════════════════════════════════════════════════════════════════
@@ -42,7 +41,6 @@ class AuditoriasFrame(ttk.Frame):
         ttk.Button(bar, text="✎  Editar",  command=self._editar).pack(side="right", padx=4)
         ttk.Button(bar, text="✕  Eliminar", style="Danger.TButton",
                    command=self._eliminar).pack(side="right", padx=4)
-        # ── CORRECCIÓN: solo UNA definición de este botón ──
         ttk.Button(bar, text="🖨  Imprimir Acta", style="Success.TButton",
                    command=self._imprimir_acta).pack(side="left", padx=4)
 
@@ -60,7 +58,6 @@ class AuditoriasFrame(ttk.Frame):
             )
         rows = q.order_by(Auditoria.fecha_auditoria.desc()).all()
 
-        # Serializar relaciones ANTES de cerrar la sesión
         datos = []
         for a in rows:
             nombre = ""
@@ -91,11 +88,6 @@ class AuditoriasFrame(ttk.Frame):
         return int(sel[0])
 
     def _imprimir_acta(self):
-        """
-        Genera el Acta de Auditoría en PDF usando documentos_institucionales.
-        ── CORRECCIÓN: eliminada la versión duplicada que llamaba a reports.imprimir
-           (módulo inexistente). Esta es la única definición válida.
-        """
         from tkinter import filedialog
         from reports.documentos_institucionales import doc_acta_auditoria, _auto_path, abrir_pdf
         from database.db import get_session
@@ -186,7 +178,6 @@ class AuditoriaDialog(tk.Toplevel):
         self.e_num = ttk.Entry(f, width=10, font=("Segoe UI", 11, "bold"))
         self.e_num.grid(row=1, column=1, sticky="w", pady=5)
 
-        # Al crear nueva auditoría: calcular siguiente correlativo y bloquear
         if not self.auditoria_id:
             from sqlalchemy import func as _func
             _s = get_session()
@@ -276,7 +267,6 @@ class AuditoriaDialog(tk.Toplevel):
 
         estab_key = self.e_estab.get()
         a.codigo_establecimiento = self._estab_map.get(estab_key)
-        # Leer número aunque el Entry esté disabled
         self.e_num.configure(state="normal")
         num_s = self.e_num.get().strip()
         self.e_num.configure(state="disabled")
@@ -322,20 +312,28 @@ class SanidadFrame(ttk.Frame):
     def _build(self):
         bar = ttk.Frame(self, padding=(0, 0, 0, 8))
         bar.pack(fill="x")
-        ttk.Label(bar, text="Sanidad / Libretas", font=FONT_TITLE).pack(side="left")
-
-        ttk.Label(bar, text="Buscar:").pack(side="left", padx=(20, 4))
+        
+        # Parte izquierda: Título y Buscador
+        left_side = ttk.Frame(bar)
+        left_side.pack(side="left", fill="x", expand=True)
+        
+        ttk.Label(left_side, text="Sanidad / Libretas", font=FONT_TITLE).pack(side="left")
+        ttk.Label(left_side, text="Buscar:").pack(side="left", padx=(20, 4))
+        
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *_: self.refresh())
-        ttk.Entry(bar, textvariable=self.search_var, width=24).pack(side="left")
+        ttk.Entry(left_side, textvariable=self.search_var, width=24).pack(side="left")
 
-        ttk.Button(bar, text="＋  Nuevo",  command=self._nuevo).pack(side="right", padx=4)
-        ttk.Button(bar, text="✎  Editar",  command=self._editar).pack(side="right", padx=4)
+        # Parte derecha: Botones de Acción
+        right_side = ttk.Frame(bar)
+        right_side.pack(side="right")
+        
+        ttk.Button(right_side, text="＋  Nuevo",  command=self._nuevo).pack(side="left", padx=4)
+        ttk.Button(right_side, text="✎  Editar",  command=self._editar).pack(side="left", padx=4)
 
         self.tree, _ = scrolled_treeview(self, self.COLS, self.HEADINGS, self.WIDTHS, height=22)
         self.tree.bind("<Double-1>", lambda e: self._editar())
         self.tree.bind("<Button-3>", self._menu_contextual)
-
 
     def _menu_contextual(self, event):
         iid = self.tree.identify_row(event.y)
@@ -352,14 +350,13 @@ class SanidadFrame(ttk.Frame):
 
     def _eliminar(self, codigo):
         if not confirm_dialog(self, "Eliminar",
-                f"¿Estás seguro de eliminar la auditoría #{codigo} del sistema?\n\n"
+                f"¿Estás seguro de eliminar el registro #{codigo} del sistema?\n\n"
                 "Esta acción no se puede deshacer."):
             return
         session = get_session()
-        from database.models import Auditoria
-        a = session.query(Auditoria).get(int(codigo))
-        if a:
-            session.delete(a)
+        s = session.query(Sanidad).get(int(codigo))
+        if s:
+            session.delete(s)
             session.commit()
         session.close()
         self.refresh()
@@ -420,16 +417,36 @@ class SanidadFrame(ttk.Frame):
 
 
 class SanidadDialog(tk.Toplevel):
-    def __init__(self, parent, sanidad_id=None):
+    def __init__(self, parent, sanidad_id=None, codigo_estab=None):
         super().__init__(parent)
+        
+        self.codigo_estab_predefinido = None
+        if codigo_estab and not sanidad_id:
+            session = get_session()
+            s = session.query(Sanidad).filter_by(codigo_establecimiento=codigo_estab).first()
+            if s:
+                sanidad_id = s.codigo_sanidad
+            else:
+                self.codigo_estab_predefinido = codigo_estab
+            session.close()
+
         self.sanidad_id = sanidad_id
         self.title("Nueva sanidad" if not sanidad_id else f"Editar sanidad #{sanidad_id}")
         self.resizable(False, False)
-        center_window(self, 600, 520)
+        center_window(self, 640, 580)
         self.grab_set()
+        
         self._build()
+        
         if sanidad_id:
             self._load(sanidad_id)
+            self.e_estab.configure(state="disabled")
+        elif self.codigo_estab_predefinido:
+            for key, cod in self._estab_map.items():
+                if cod == self.codigo_estab_predefinido:
+                    self.e_estab.set(key)
+                    break
+            self.e_estab.configure(state="disabled")
 
     def _build(self):
         f = ttk.Frame(self, padding=20)
@@ -438,79 +455,73 @@ class SanidadDialog(tk.Toplevel):
         f.columnconfigure(3, weight=1)
 
         session = get_session()
-        estabs = session.query(Establecimiento).filter_by(baja=False).order_by(
-            Establecimiento.nombre_establecimiento).all()
+        estabs = session.query(Establecimiento).order_by(Establecimiento.nombre_establecimiento).all()
         self._estab_map = {
             f"{e.codigo_establecimiento} — {(e.nombre_establecimiento or '').title()}": e.codigo_establecimiento
             for e in estabs}
         session.close()
 
-        ttk.Label(f, text="Establecimiento *").grid(row=0, column=0, sticky="w", pady=5, padx=(0, 8))
+        ttk.Label(f, text="Establecimiento *").grid(row=0, column=0, sticky="w", pady=8, padx=(0, 8))
         self.e_estab = ttk.Combobox(f, values=[""] + list(self._estab_map.keys()),
                                     width=40, state="readonly")
-        self.e_estab.grid(row=0, column=1, columnspan=3, sticky="ew", pady=5)
+        self.e_estab.grid(row=0, column=1, columnspan=3, sticky="ew", pady=8)
 
-        # Titular
-        ttk.Label(f, text="Apellido titular").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 8))
+        # --- SECCIÓN TITULAR ---
+        ttk.Separator(f, orient="horizontal").grid(row=1, column=0, columnspan=4, sticky="ew", pady=10)
+        ttk.Label(f, text="DATOS DEL TITULAR", font=("Segoe UI", 9, "bold")).grid(row=2, column=0, columnspan=4, sticky="w")
+        
+        ttk.Label(f, text="Apellido").grid(row=3, column=0, sticky="w", pady=4)
         self.e_ap_tit = ttk.Entry(f, width=22)
-        self.e_ap_tit.grid(row=1, column=1, sticky="ew", pady=4)
+        self.e_ap_tit.grid(row=3, column=1, sticky="ew", pady=4, padx=(0, 10))
 
-        ttk.Label(f, text="Nombre titular").grid(row=1, column=2, sticky="w", padx=(12, 8))
+        ttk.Label(f, text="Nombre").grid(row=3, column=2, sticky="w")
         self.e_nom_tit = ttk.Entry(f, width=22)
-        self.e_nom_tit.grid(row=1, column=3, sticky="ew", pady=4)
+        self.e_nom_tit.grid(row=3, column=3, sticky="ew", pady=4)
 
-        ttk.Label(f, text="Venc. libreta titular").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Label(f, text="Venc. Libreta").grid(row=4, column=0, sticky="w", pady=4)
         self.e_venc_tit = ttk.Entry(f, width=14)
-        self.e_venc_tit.grid(row=2, column=1, sticky="w", pady=4)
+        self.e_venc_tit.grid(row=4, column=1, sticky="w", pady=4)
 
-        # Empleados
-        for i, (ap_attr, nom_attr, venc_attr) in enumerate([
-            ("e_ap_emp1", "e_nom_emp1", "e_venc_emp1"),
-            ("e_ap_emp2", "e_nom_emp2", "e_venc_emp2"),
-        ], start=1):
-            row = 2 + i
-            ttk.Label(f, text=f"Apellido empleado {i}").grid(row=row, column=0, sticky="w", pady=4, padx=(0, 8))
+        # --- SECCIÓN EMPLEADOS ---
+        filas_emp = [
+            ("EMPLEADO 1", "e_ap_emp1", "e_nom_emp1", "e_venc_emp1", 5),
+            ("EMPLEADO 2", "e_ap_emp2", "e_nom_emp2", "e_venc_emp2", 9)
+        ]
+
+        for label, ap_attr, nom_attr, venc_attr, start_row in filas_emp:
+            ttk.Separator(f, orient="horizontal").grid(row=start_row, column=0, columnspan=4, sticky="ew", pady=10)
+            ttk.Label(f, text=label, font=("Segoe UI", 9, "bold")).grid(row=start_row+1, column=0, columnspan=4, sticky="w")
+            
+            ttk.Label(f, text="Apellido").grid(row=start_row+2, column=0, sticky="w", pady=4)
             ap_e = ttk.Entry(f, width=20)
-            ap_e.grid(row=row, column=1, sticky="ew", pady=4)
+            ap_e.grid(row=start_row+2, column=1, sticky="ew", pady=4, padx=(0, 10))
             setattr(self, ap_attr, ap_e)
 
-            ttk.Label(f, text=f"Nombre empleado {i}").grid(row=row, column=2, sticky="w", padx=(12, 8))
+            ttk.Label(f, text="Nombre").grid(row=start_row+2, column=2, sticky="w")
             nom_e = ttk.Entry(f, width=20)
-            nom_e.grid(row=row, column=3, sticky="ew", pady=4)
+            nom_e.grid(row=start_row+2, column=3, sticky="ew", pady=4)
             setattr(self, nom_attr, nom_e)
 
-            row2 = row + 2
-            ttk.Label(f, text=f"Venc. libreta emp. {i}").grid(row=row2, column=0, sticky="w", pady=4, padx=(0, 8))
+            ttk.Label(f, text="Venc. Libreta").grid(row=start_row+3, column=0, sticky="w", pady=4)
             venc_e = ttk.Entry(f, width=14)
-            venc_e.grid(row=row2, column=1, sticky="w", pady=4)
+            venc_e.grid(row=start_row+3, column=1, sticky="w", pady=4)
             setattr(self, venc_attr, venc_e)
 
-        # Checks
-        checks_frame = ttk.LabelFrame(f, text="Habilitaciones", padding=10)
-        checks_frame.grid(row=7, column=0, columnspan=4, sticky="ew", pady=10)
+        # --- SECCIÓN HABILITACIONES ---
+        checks_frame = ttk.LabelFrame(f, text="Otras Habilitaciones", padding=10)
+        checks_frame.grid(row=13, column=0, columnspan=4, sticky="ew", pady=15)
 
-        self.v_libreta = tk.BooleanVar()
-        self.v_carnet  = tk.BooleanVar()
-        self.v_certif  = tk.BooleanVar()
-        self.v_bpm     = tk.BooleanVar()
+        self.v_libreta = tk.BooleanVar(); self.v_carnet = tk.BooleanVar()
+        self.v_certif = tk.BooleanVar(); self.v_bpm = tk.BooleanVar()
 
-        ttk.Checkbutton(checks_frame, text="Libreta sanitaria",
-                        variable=self.v_libreta).grid(row=0, column=0, padx=12)
-        ttk.Checkbutton(checks_frame, text="Carnet manipulador",
-                        variable=self.v_carnet).grid(row=0, column=1, padx=12)
-        ttk.Checkbutton(checks_frame, text="Certificado manipulador",
-                        variable=self.v_certif).grid(row=0, column=2, padx=12)
-        ttk.Checkbutton(checks_frame, text="Inscripto Curso BPM",
-                        variable=self.v_bpm).grid(row=0, column=3, padx=12)
-
-        ttk.Label(checks_frame, text="Fecha certificado manip.:").grid(row=1, column=0, sticky="w", pady=4)
-        self.e_fecha_certif = ttk.Entry(checks_frame, width=14)
-        self.e_fecha_certif.grid(row=1, column=1, sticky="w")
+        ttk.Checkbutton(checks_frame, text="Libreta San.", variable=self.v_libreta).grid(row=0, column=0, padx=5)
+        ttk.Checkbutton(checks_frame, text="Carnet Manip.", variable=self.v_carnet).grid(row=0, column=1, padx=5)
+        ttk.Checkbutton(checks_frame, text="Certif. Manip.", variable=self.v_certif).grid(row=0, column=2, padx=5)
+        ttk.Checkbutton(checks_frame, text="Curso BPM", variable=self.v_bpm).grid(row=0, column=3, padx=5)
 
         bar = ttk.Frame(f)
-        bar.grid(row=8, column=0, columnspan=4, pady=(12, 0), sticky="e")
-        ttk.Button(bar, text="Guardar", style="Success.TButton",
-                   command=self._guardar).pack(side="right", padx=4)
+        bar.grid(row=14, column=0, columnspan=4, pady=(15, 0), sticky="e")
+        ttk.Button(bar, text="Guardar", style="Success.TButton", command=self._guardar).pack(side="right", padx=4)
         ttk.Button(bar, text="Cancelar", command=self.destroy).pack(side="right")
 
     def _load(self, sid):
@@ -536,7 +547,6 @@ class SanidadDialog(tk.Toplevel):
         self.v_carnet.set(bool(s.carnet_manipulador))
         self.v_certif.set(bool(s.certificado_manipulador))
         self.v_bpm.set(bool(s.inscripto_curso_bpm))
-        set_entry(self.e_fecha_certif, format_date(s.fecha_certificado_manip))
         session.close()
 
     def _guardar(self):
@@ -565,7 +575,6 @@ class SanidadDialog(tk.Toplevel):
         s.carnet_manipulador      = self.v_carnet.get()
         s.certificado_manipulador = self.v_certif.get()
         s.inscripto_curso_bpm     = self.v_bpm.get()
-        s.fecha_certificado_manip = parse_date_str(get_entry(self.e_fecha_certif))
 
         try:
             session.commit()

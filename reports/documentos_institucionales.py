@@ -483,9 +483,10 @@ def doc_recibo_inicio_tramite(session, output_path: str, codigo_inscripcion: int
 def doc_recibo_transaccion(session, output_path: str, codigos_deuda: list):
     """
     Genera un documento con la selección de deudas. 
-    Cambia el título automáticamente según el estado de pago.
+    Cambia el título automáticamente según el estado de pago e incluye el medio de pago.
     """
     from database.models import Deuda, Establecimiento
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
     if not codigos_deuda:
         raise ValueError("No se indicaron deudas para el documento.")
@@ -497,13 +498,17 @@ def doc_recibo_transaccion(session, output_path: str, codigos_deuda: list):
     if not deudas:
         raise ValueError("No se encontraron las deudas indicadas.")
 
-    # NUEVO: Lógica de título inteligente
+    # Lógica de título inteligente
     todas_pagadas = all(d.pago for d in deudas)
     titulo_doc = "Recibo de Pago\nTransacción" if todas_pagadas else "Detalle de Deuda\nSelección"
 
     codigo_estab = deudas[0].codigo_establecimiento
     e = session.query(Establecimiento).get(codigo_estab.upper())
     nombre_estab = (e.nombre_establecimiento or "").upper() if e else codigo_estab
+
+    # OBTENER MEDIO DE PAGO: Buscamos qué medio se usó (solo aplica si están pagadas)
+    medios = list(set((d.medio_pago or "EFECTIVO") for d in deudas if d.pago))
+    txt_medio = " / ".join(medios) if medios else ""
 
     filas = []
     total_final = 0.0
@@ -579,13 +584,17 @@ def doc_recibo_transaccion(session, output_path: str, codigos_deuda: list):
     story.append(t)
     story.append(Spacer(1, 0.4*cm))
 
-    # Etiqueta de total dinámica
+    # MODIFICACIÓN: Agregamos el Medio de Pago en la fila del total
     lbl_total = "TOTAL ABONADO:" if todas_pagadas else "TOTAL A PAGAR:"
+    lbl_medio = f"Medio de Pago: <b>{txt_medio}</b>" if todas_pagadas and txt_medio else ""
+    
     total_data = [[
+        Paragraph(lbl_medio, ParagraphStyle("medio", fontName="Helvetica", fontSize=10, alignment=TA_LEFT, textColor=GRIS)),
         Paragraph(lbl_total, ParagraphStyle("tp", fontName="Helvetica-Bold", fontSize=12, alignment=TA_RIGHT)),
         Paragraph(f"<b>{_fmt_moneda(total_final)}</b>", ParagraphStyle("tv", fontName="Helvetica-Bold", fontSize=13, textColor=AZUL, alignment=TA_RIGHT)),
     ]]
-    story.append(Table(total_data, colWidths=[12*cm, 4*cm]))
+    # Distribuimos el ancho de la tabla final para acomodar el nuevo texto
+    story.append(Table(total_data, colWidths=[6*cm, 6*cm, 4*cm]))
 
     doc.build(story, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
     return output_path

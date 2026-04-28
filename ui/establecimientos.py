@@ -83,7 +83,6 @@ class EstablecimientosFrame(ttk.Frame):
         session.close()
         self.tree.delete(*self.tree.get_children())
         for i, d in enumerate(datos):
-            # Escudo para el comercio sin código
             codigo_id = d[0] if d[0] and str(d[0]).strip() != "" else f"SIN_CODIGO_{i}"
             self.tree.insert("", "end", iid=codigo_id, tags=(d[8],), values=d[:8])
 
@@ -206,6 +205,7 @@ class EstablecimientoDialog(tk.Toplevel):
         self.resizable(False, False)
         center_window(self, 700, 620)
         self.grab_set()
+        
         self._build()
         if codigo:
             self._load(codigo)
@@ -363,9 +363,12 @@ class EstablecimientoDialog(tk.Toplevel):
 
         session = get_session()
         rubros = session.query(Rubro).order_by(Rubro.nombre).all()
-        self._rubros_map   = {f"{r.nombre} ($ {r.valor:,.0f})": r.id_rubro for r in rubros}
-        self._rubros_valor = {r.id_rubro: r.valor for r in rubros}
+        
+        # Protección contra NULOS en Rubros
+        self._rubros_map   = {f"{r.nombre or 'Sin nombre'} ($ {(r.valor or 0.0):,.0f})": r.id_rubro for r in rubros}
+        self._rubros_valor = {r.id_rubro: (r.valor or 0.0) for r in rubros}
         session.close()
+        
         rubro_vals = [""] + list(self._rubros_map.keys())
 
         for i, (lbl, attr_cb, attr_monto) in enumerate([
@@ -384,7 +387,6 @@ class EstablecimientoDialog(tk.Toplevel):
             ent.grid(row=i, column=3, sticky="w", pady=5)
             setattr(self, attr_monto, ent)
 
-            # Monto se pone automático al seleccionar rubro — no editable
             def _on_select(event, entry=ent, combo=cb):
                 rid = self._rubros_map.get(combo.get())
                 if rid:
@@ -395,7 +397,6 @@ class EstablecimientoDialog(tk.Toplevel):
                     entry.configure(state="disabled")
             cb.bind("<<ComboboxSelected>>", _on_select)
 
-        # ---> NUEVO: Checkbox de Pago Express (solo visible en alta nueva)
         if not self.codigo:
             ttk.Separator(f, orient="horizontal").grid(row=4, column=0, columnspan=4, sticky="ew", pady=(20, 10))
             self.pago_express_var = tk.BooleanVar(value=False)
@@ -454,22 +455,22 @@ class EstablecimientoDialog(tk.Toplevel):
         set_rubro_cb(self.e_anexo2, e.anexo2_id)
         set_rubro_cb(self.e_anexo3, e.anexo3_id)
 
-        # Cargar montos históricos (readonly)
+        # Cargar montos históricos con protección contra NULOS
         for entry, val in [
-            (self.e_monto,  e.monto or 0),
-            (self.e_monto1, e.monto1 or 0),
-            (self.e_monto2, e.monto2 or 0),
-            (self.e_monto3, e.monto3 or 0),
+            (self.e_monto,  e.monto),
+            (self.e_monto1, e.monto1),
+            (self.e_monto2, e.monto2),
+            (self.e_monto3, e.monto3),
         ]:
             entry.configure(state="normal")
             entry.delete(0, "end")
-            entry.insert(0, str(val))
+            # Si el valor de la base de datos viene vacío (None), le pone 0.00
+            entry.insert(0, f"{(val or 0.0):.2f}")
             entry.configure(state="disabled")
 
         session.close()
 
     def _guardar(self):
-        # Leer código aunque esté disabled
         self.e_codigo.configure(state="normal")
         codigo = get_entry(self.e_codigo).upper()
         self.e_codigo.configure(state="disabled")
@@ -489,7 +490,6 @@ class EstablecimientoDialog(tk.Toplevel):
                 error_dialog(self, "Error", "Establecimiento no encontrado.")
                 session.close()
                 return
-            # Advertencia si cambia el rubro principal
             rubro_nuevo = self._rubros_map.get(self.e_rubro.get())
             if e.rubro_id and rubro_nuevo and e.rubro_id != rubro_nuevo:
                 if not messagebox.askyesno("Cambio de rubro",
@@ -509,21 +509,36 @@ class EstablecimientoDialog(tk.Toplevel):
         e.localidad_establecimiento = get_entry(self.e_localidad)
         e.provincia_establecimiento = get_entry(self.e_prov)
         e.telefono_establecimiento  = get_entry(self.e_tel)
-        e.fecha_certificado         = parse_date_str(get_entry(self.e_cert))
+        # Reemplazar la línea de e.fecha_certificado por:
+        fecha_cert_str = get_entry(self.e_cert)
+        if fecha_cert_str:
+            fecha_valida = parse_date_str(fecha_cert_str)
+            if not fecha_valida:
+                error_dialog(self, "Error de Fecha", "La fecha del certificado no es válida. Usá el formato dd/mm/aaaa.")
+                session.close()
+                return
+            e.fecha_certificado = fecha_valida
+        else:
+            e.fecha_certificado = None
         e.solicitudes               = get_entry(self.e_solicitudes)
         e.observaciones             = self.e_obs.get("1.0", "end").strip()
         cp_str = get_entry(self.e_cp)
         e.codigo_postal = int(cp_str) if cp_str.isdigit() else None
 
-        # Titular: nuevo o existente
         if not self.codigo and hasattr(self, "inscripto_existe_var") and not self.inscripto_existe_var.get():
             apellido = get_entry(self.ni_apellido)
             if not apellido:
                 error_dialog(self, "Error", "El Apellido del inscripto es obligatorio.")
                 session.close()
                 return
+                
+            # SEGURIDAD: Recalculamos el ID en este milisegundo para evitar colisiones si hay 2 PCs guardando a la vez
+            from database.models import Inscripto as _I
+            ultimo_insc = session.query(_I).order_by(_I.codigo_inscripcion.desc()).first()
+            id_seguro = (ultimo_insc.codigo_inscripcion + 1) if ultimo_insc else 1
+            
             nuevo_insc = Inscripto(
-                codigo_inscripcion    = self._siguiente_cod_inscripto,
+                codigo_inscripcion    = id_seguro,  # <--- Usamos el id_seguro
                 apellido_razonsocial  = apellido.upper(),
                 nombres               = get_entry(self.ni_nombres).upper(),
                 numero_documento      = get_entry(self.ni_dni),
@@ -560,7 +575,6 @@ class EstablecimientoDialog(tk.Toplevel):
 
         try:
             session.commit()
-            # Si es nuevo, crear la primera deuda automáticamente
             if not self.codigo:
                 from database.models import Deuda, Emision
                 anio_actual    = datetime.now().year
@@ -569,10 +583,8 @@ class EstablecimientoDialog(tk.Toplevel):
                 emision        = session.query(Emision).get(id_emision)
                 vencimiento    = emision.vencimiento if emision else None
                 
-                # Calcular el importe sumando rubro principal y anexos
                 importe_total = (e.monto or 0.0) + (e.monto1 or 0.0) + (e.monto2 or 0.0) + (e.monto3 or 0.0)
 
-                # Verificar si tildaron el Pago Express en la UI
                 es_pago_express = getattr(self, "pago_express_var", tk.BooleanVar(value=False)).get()
 
                 deuda = Deuda(
@@ -589,7 +601,6 @@ class EstablecimientoDialog(tk.Toplevel):
                 session.add(deuda)
                 session.commit()
                 
-                # Mensajes y acción post-guardado
                 if es_pago_express:
                     if messagebox.askyesno("Guardado Exitoso",
                             f"✅ Establecimiento guardado y tasa inicial COBRADA por $ {importe_total:,.2f}.\n\n"

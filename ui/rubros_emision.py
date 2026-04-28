@@ -1,19 +1,18 @@
 """
 Módulo de Rubros y Emisión — tablas de configuración del sistema.
-Incluye actualización masiva por porcentaje con lógica de tasas históricas.
+Incluye actualización masiva por porcentaje y Generación Masiva de Deudas.
 """
 import tkinter as tk
 from tkinter import ttk, messagebox
 
 from database.db import get_session
-from database.models import Rubro, Anexo1, Anexo2, Anexo3, Emision
+from database.models import Rubro, Anexo1, Anexo2, Anexo3, Emision, Establecimiento, Deuda
 from utils.ui_helpers import (
     COLORS, FONT_NORMAL, FONT_TITLE,
     scrolled_treeview, set_entry, get_entry,
     format_date, parse_date_str, parse_float_str,
     center_window, confirm_dialog, info_dialog, error_dialog,
 )
-
 
 class RubrosFrame(ttk.Frame):
     """Administración de rubros y anexos."""
@@ -40,7 +39,7 @@ class RubrosFrame(ttk.Frame):
             self._build_tab(f, model, attr)
 
         fem = ttk.Frame(nb, padding=8)
-        nb.add(fem, text="  Períodos de Emisión  ")
+        nb.add(fem, text="  Períodos de Emisión y Facturación  ")
         self._build_emision(fem)
 
     def _build_tab(self, parent, model, attr_prefix):
@@ -115,18 +114,6 @@ class RubrosFrame(ttk.Frame):
     # ── Actualización masiva por porcentaje ──────────────────────────────────
 
     def _actualizar_por_porcentaje(self, model, attr_prefix):
-        """
-        Abre un diálogo para actualizar todos los valores de la tabla
-        por un porcentaje ingresado por el usuario.
-
-        LÓGICA DE TASAS HISTÓRICAS:
-        Los establecimientos guardan el monto que tenían al momento de su
-        habilitación. Actualizar los rubros NO modifica los montos guardados
-        en los establecimientos existentes — solo cambia el valor de referencia
-        para NUEVOS establecimientos.
-        Si se quiere actualizar un establecimiento específico, hay que editarlo
-        y re-seleccionar el rubro para que tome el nuevo valor.
-        """
         dlg = tk.Toplevel(self)
         dlg.title("Actualizar valores por porcentaje")
         dlg.resizable(False, False)
@@ -144,7 +131,6 @@ class RubrosFrame(ttk.Frame):
             "Ejemplos:  30  aumenta 30%  |  -10  reduce 10%"
         ), foreground=COLORS["text_light"]).pack(anchor="w", pady=(0, 12))
 
-        # Input del porcentaje
         pct_frame = ttk.Frame(f)
         pct_frame.pack(fill="x", pady=(0, 8))
         ttk.Label(pct_frame, text="Porcentaje (%):").pack(side="left", padx=(0, 8))
@@ -154,14 +140,12 @@ class RubrosFrame(ttk.Frame):
         ttk.Label(pct_frame, text="(puede ser negativo para reducir)",
                   foreground=COLORS["text_light"]).pack(side="left", padx=(8, 0))
 
-        # Preview de cuántos registros se van a actualizar
         session = get_session()
         total = session.query(model).count()
         session.close()
         ttk.Label(f, text=f"Se actualizarán {total} registros.",
                   font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 8))
 
-        # Aviso importante sobre tasas históricas
         aviso = ttk.LabelFrame(f, text="⚠  Importante — Tasas históricas", padding=10)
         aviso.pack(fill="x", pady=(0, 12))
         ttk.Label(aviso, text=(
@@ -172,7 +156,6 @@ class RubrosFrame(ttk.Frame):
             "re-seleccionar el rubro en la pestaña 'Rubros y montos'."
         ), foreground=COLORS["text_light"]).pack(anchor="w")
 
-        # Botones
         btn_frame = ttk.Frame(f)
         btn_frame.pack(fill="x", pady=(8, 0))
 
@@ -183,7 +166,6 @@ class RubrosFrame(ttk.Frame):
             except ValueError:
                 error_dialog(dlg, "Error", "Ingresá un número válido (ej: 30 o -10).")
                 return
-            # Mostrar ventana de previsualización
             _mostrar_preview(pct)
 
         def _aplicar():
@@ -204,12 +186,10 @@ class RubrosFrame(ttk.Frame):
             try:
                 factor = 1 + pct / 100
                 actualizados = 0
-                # Actualizar la tabla actual
                 for r in session.query(model).all():
                     if r.valor and r.valor > 0:
                         r.valor = round(r.valor * factor, 2)
                         actualizados += 1
-                # Si es Rubros principales, actualizar también Anexo1/2/3
                 if model == Rubro:
                     for anexo_model in [Anexo1, Anexo2, Anexo3]:
                         for r in session.query(anexo_model).all():
@@ -222,7 +202,6 @@ class RubrosFrame(ttk.Frame):
                             else f"✓ {actualizados} valores actualizados con {signo}{pct}%.")
                 dlg.destroy()
                 self._refresh_tab(model, attr_prefix)
-                # Refrescar también los anexos si era Rubros
                 if model == Rubro:
                     for ap in ["_anx1", "_anx2", "_anx3"]:
                         self._refresh_tab(
@@ -234,7 +213,6 @@ class RubrosFrame(ttk.Frame):
                 session.close()
 
         def _mostrar_preview(pct):
-            """Muestra una ventana con los valores antes/después."""
             prev = tk.Toplevel(dlg)
             prev.title("Previsualización de cambios")
             prev.resizable(True, True)
@@ -269,26 +247,30 @@ class RubrosFrame(ttk.Frame):
                     f"$ {nuevo:,.2f}",
                 ))
 
-        ttk.Button(btn_frame, text="🔍  Previsualizar",
-                   command=_previsualizar).pack(side="left", padx=4)
-        ttk.Button(btn_frame, text="Cancelar",
-                   command=dlg.destroy).pack(side="right", padx=4)
-        ttk.Button(btn_frame, text="✓  Aplicar", style="Success.TButton",
-                   command=_aplicar).pack(side="right", padx=4)
+        ttk.Button(btn_frame, text="🔍  Previsualizar", command=_previsualizar).pack(side="left", padx=4)
+        ttk.Button(btn_frame, text="Cancelar", command=dlg.destroy).pack(side="right", padx=4)
+        ttk.Button(btn_frame, text="✓  Aplicar", style="Success.TButton", command=_aplicar).pack(side="right", padx=4)
 
-    # ── Emisión ──────────────────────────────────────────────────────────────
+    # ── Emisión y Generación Masiva ───────────────────────────────────────────
 
     def _build_emision(self, parent):
         bar = ttk.Frame(parent)
         bar.pack(fill="x", pady=(0, 6))
-        ttk.Button(bar, text="＋  Nuevo período", command=self._nueva_emision).pack(side="left", padx=2)
-        ttk.Button(bar, text="✎  Editar",         command=self._editar_emision).pack(side="left", padx=2)
-        ttk.Button(bar, text="✕  Eliminar", style="Danger.TButton",
-                   command=self._eliminar_emision).pack(side="left", padx=2)
+        
+        left_btns = ttk.Frame(bar)
+        left_btns.pack(side="left")
+        ttk.Button(left_btns, text="＋  Nuevo período", command=self._nueva_emision).pack(side="left", padx=2)
+        ttk.Button(left_btns, text="✎  Editar", command=self._editar_emision).pack(side="left", padx=2)
+        ttk.Button(left_btns, text="✕  Eliminar", style="Danger.TButton", command=self._eliminar_emision).pack(side="left", padx=2)
+
+        right_btns = ttk.Frame(bar)
+        right_btns.pack(side="right")
+        # MEJORA: Botón de Generación Masiva
+        ttk.Button(right_btns, text="⚡ Generar Deudas Masivas", command=self._generar_deudas_masivas).pack(side="left", padx=2)
 
         cols   = ("id", "periodo", "anio", "vencimiento", "primera_mora", "segunda_mora")
-        heads  = ("ID", "Per.", "Año", "Vencimiento", "1ª Mora", "2ª Mora")
-        widths = (80, 50, 60, 120, 120, 120)
+        heads  = ("ID Período", "Período", "Año", "Vencimiento", "1ª Mora", "2ª Mora")
+        widths = (100, 70, 70, 120, 120, 120)
         self.tree_emision, _ = scrolled_treeview(parent, cols, heads, widths, height=17)
         self.tree_emision.bind("<Double-1>", lambda e: self._editar_emision())
         self._refresh_emision()
@@ -296,7 +278,7 @@ class RubrosFrame(ttk.Frame):
     def _refresh_emision(self):
         self.tree_emision.delete(*self.tree_emision.get_children())
         session = get_session()
-        rows = session.query(Emision).order_by(Emision.anio.desc(), Emision.periodo).all()
+        rows = session.query(Emision).order_by(Emision.anio.desc(), Emision.periodo.desc()).all()
         session.close()
         for e in rows:
             self.tree_emision.insert("", "end", iid=e.id_emision, values=(
@@ -332,7 +314,7 @@ class RubrosFrame(ttk.Frame):
         eid = self._selected_emision_id()
         if not eid:
             return
-        if not confirm_dialog(self, "Eliminar", f"¿Eliminar el período {eid}?"):
+        if not confirm_dialog(self, "Eliminar", f"¿Eliminar el período {eid}?\n\n(Las deudas ya generadas para este período no se borrarán)."):
             return
         session = get_session()
         e = session.query(Emision).get(eid)
@@ -341,6 +323,70 @@ class RubrosFrame(ttk.Frame):
             session.commit()
         session.close()
         self._refresh_emision()
+
+    def _generar_deudas_masivas(self):
+        """Genera boletas para todos los comercios activos usando sus tasas históricas."""
+        eid = self._selected_emision_id()
+        if not eid:
+            return
+            
+        session = get_session()
+        emision = session.query(Emision).get(eid)
+        if not emision:
+            session.close()
+            return
+
+        msg = (f"¿Generar deudas masivas para el período {emision.periodo} del año {emision.anio}?\n\n"
+               "• Se recorrerán todos los establecimientos ACTIVOS.\n"
+               "• Se utilizarán los valores (Tasas) guardados en cada local.\n"
+               "• Los locales que ya tengan deuda para este período serán IGNORADOS para evitar duplicados.")
+               
+        if not confirm_dialog(self, "Generar Deudas Masivas", msg):
+            session.close()
+            return
+
+        try:
+            activos = session.query(Establecimiento).filter_by(baja=False).all()
+            creadas = 0
+            omitidas = 0
+
+            for estab in activos:
+                # Evitar duplicados
+                existe = session.query(Deuda).filter_by(
+                    codigo_establecimiento=estab.codigo_establecimiento,
+                    anio=emision.anio,
+                    periodo=emision.periodo
+                ).first()
+
+                if existe:
+                    omitidas += 1
+                    continue
+
+                # Calculamos el importe leyendo la tasa histórica de ese local
+                importe_total = (estab.monto or 0.0) + (estab.monto1 or 0.0) + (estab.monto2 or 0.0) + (estab.monto3 or 0.0)
+
+                nueva_deuda = Deuda(
+                    codigo_establecimiento=estab.codigo_establecimiento,
+                    anio=emision.anio,
+                    periodo=emision.periodo,
+                    vencimiento=emision.vencimiento,
+                    importe=importe_total,
+                    pago=False,
+                    monto_abonado=0.0
+                )
+                session.add(nueva_deuda)
+                creadas += 1
+
+            session.commit()
+            info_dialog(self, "Generación Completada",
+                        f"Proceso finalizado correctamente.\n\n"
+                        f"✅ Boletas generadas: {creadas}\n"
+                        f"⏭ Locales omitidos (ya tenían deuda): {omitidas}")
+        except Exception as ex:
+            session.rollback()
+            error_dialog(self, "Error al generar deudas masivas", str(ex))
+        finally:
+            session.close()
 
 
 class RubroDialog(tk.Toplevel):
@@ -413,7 +459,7 @@ class EmisionDialog(tk.Toplevel):
         self.emision_id = emision_id
         self.title("Nuevo período" if not emision_id else f"Editar período {emision_id}")
         self.resizable(False, False)
-        center_window(self, 400, 300)
+        center_window(self, 400, 320)
         self.grab_set()
         self._build()
         if emision_id:
@@ -424,27 +470,32 @@ class EmisionDialog(tk.Toplevel):
         f.pack(fill="both", expand=True)
         f.columnconfigure(1, weight=1)
 
+        # MEJORA: Selectores seguros para evitar que el usuario tipee el ID a mano.
+        ttk.Label(f, text="Período (1 ó 2) *").grid(row=0, column=0, sticky="w", pady=5, padx=(0, 10))
+        self.e_periodo = ttk.Combobox(f, values=["1", "2"], width=14, state="readonly" if self.emision_id else "normal")
+        self.e_periodo.grid(row=0, column=1, sticky="w", pady=5)
+        
+        ttk.Label(f, text="Año (ej: 2026) *").grid(row=1, column=0, sticky="w", pady=5, padx=(0, 10))
+        self.e_anio = ttk.Entry(f, width=16)
+        self.e_anio.grid(row=1, column=1, sticky="w", pady=5)
+        if self.emision_id:
+            self.e_anio.configure(state="disabled")
+
         fields = [
-            ("ID (ej: 1-2025) *", "e_id",      0),
-            ("Período (1 ó 2) *", "e_periodo",  1),
-            ("Año *",             "e_anio",     2),
-            ("Vencimiento",       "e_venc",     3),
-            ("1ª Mora",           "e_mora1",    4),
-            ("2ª Mora",           "e_mora2",    5),
+            ("Vencimiento",       "e_venc",     2),
+            ("1ª Mora",           "e_mora1",    3),
+            ("2ª Mora",           "e_mora2",    4),
         ]
         for label, attr, row in fields:
             ttk.Label(f, text=label).grid(row=row, column=0, sticky="w", pady=5, padx=(0, 10))
             e = ttk.Entry(f, width=16)
             e.grid(row=row, column=1, sticky="w", pady=5)
             setattr(self, attr, e)
-        ttk.Label(f, text="(dd/mm/aaaa)", font=("Segoe UI", 10)).grid(
-            row=3, column=1, sticky="e")
-
-        if self.emision_id:
-            self.e_id.configure(state="disabled")
+            
+        ttk.Label(f, text="(dd/mm/aaaa)", font=("Segoe UI", 10)).grid(row=2, column=1, sticky="e")
 
         bar = ttk.Frame(f)
-        bar.grid(row=6, column=0, columnspan=2, pady=(12, 0), sticky="e")
+        bar.grid(row=6, column=0, columnspan=2, pady=(16, 0), sticky="e")
         ttk.Button(bar, text="Guardar", style="Success.TButton",
                    command=self._guardar).pack(side="right", padx=4)
         ttk.Button(bar, text="Cancelar", command=self.destroy).pack(side="right")
@@ -453,39 +504,63 @@ class EmisionDialog(tk.Toplevel):
         session = get_session()
         e = session.query(Emision).get(eid)
         if e:
-            set_entry(self.e_id,      e.id_emision or "")
-            set_entry(self.e_periodo, e.periodo or "")
-            set_entry(self.e_anio,    str(e.anio or ""))
+            self.e_periodo.set(str(e.periodo or ""))
+            set_entry(self.e_anio, str(e.anio or ""))
             set_entry(self.e_venc,    format_date(e.vencimiento))
             set_entry(self.e_mora1,   format_date(e.primer_mora))
             set_entry(self.e_mora2,   format_date(e.segunda_mora))
         session.close()
 
     def _guardar(self):
-        eid     = get_entry(self.e_id) or (self.emision_id or "")
-        periodo = get_entry(self.e_periodo)
+        periodo = self.e_periodo.get()
         anio_s  = get_entry(self.e_anio)
-        if not eid or not periodo or not anio_s:
-            error_dialog(self, "Error", "ID, período y año son obligatorios.")
+        
+        if not periodo or not anio_s or not anio_s.isdigit():
+            error_dialog(self, "Error", "El período y el año (numérico) son obligatorios.")
             return
+            
+        # Armado seguro del ID
+        eid = f"{periodo}-{anio_s}"
+
+        # MEJORA: Validación de fechas
+        v_venc = get_entry(self.e_venc)
+        v_mora1 = get_entry(self.e_mora1)
+        v_mora2 = get_entry(self.e_mora2)
+
+        f_venc = parse_date_str(v_venc) if v_venc else None
+        f_mora1 = parse_date_str(v_mora1) if v_mora1 else None
+        f_mora2 = parse_date_str(v_mora2) if v_mora2 else None
+
+        if v_venc and not f_venc:
+            error_dialog(self, "Error", "La fecha de Vencimiento no es válida (dd/mm/aaaa).")
+            return
+        if v_mora1 and not f_mora1:
+            error_dialog(self, "Error", "La fecha de la 1ª Mora no es válida (dd/mm/aaaa).")
+            return
+        if v_mora2 and not f_mora2:
+            error_dialog(self, "Error", "La fecha de la 2ª Mora no es válida (dd/mm/aaaa).")
+            return
+
         session = get_session()
         if self.emision_id:
             em = session.query(Emision).get(self.emision_id)
         else:
             if session.query(Emision).get(eid):
-                error_dialog(self, "Error", f"El ID '{eid}' ya existe.")
+                error_dialog(self, "Error", f"El Período '{eid}' ya existe en el sistema.")
                 session.close()
                 return
             em = Emision(id_emision=eid)
             session.add(em)
-        em.periodo      = periodo
-        em.anio         = int(anio_s) if anio_s.isdigit() else None
-        em.vencimiento  = parse_date_str(get_entry(self.e_venc))
-        em.primer_mora  = parse_date_str(get_entry(self.e_mora1))
-        em.segunda_mora = parse_date_str(get_entry(self.e_mora2))
+            
+        em.periodo      = int(periodo)
+        em.anio         = int(anio_s)
+        em.vencimiento  = f_venc
+        em.primer_mora  = f_mora1
+        em.segunda_mora = f_mora2
+        
         try:
             session.commit()
-            info_dialog(self, "Guardado", "Período guardado.")
+            info_dialog(self, "Guardado", "Período guardado correctamente.")
             self.destroy()
         except Exception as ex:
             session.rollback()
